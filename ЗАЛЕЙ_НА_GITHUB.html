@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Залить Холст на GitHub</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 640px; margin: 24px auto; padding: 0 16px; line-height: 1.45; color: #111; background: #f6f4ef; }
+    h1 { font-size: 1.5rem; }
+    h2 { font-size: 1.15rem; margin-top: 1.6rem; background: #14110e; color: #e6d7c3; padding: 8px 12px; border-radius: 8px; }
+    .step { background: #fff; border-radius: 12px; padding: 14px 16px; margin: 12px 0; border: 1px solid #e5e0d4; }
+    .step b { color: #8a6a12; }
+    code { background: #eee; padding: 2px 6px; border-radius: 4px; word-break: break-all; }
+    .warn { background: #fff8e6; border-left: 4px solid #d4af37; padding: 12px; border-radius: 8px; }
+    .ok { background: #eef8f1; border-left: 4px solid #1a7f37; padding: 12px; border-radius: 8px; }
+    a.btn { display: inline-block; background: #14110e; color: #e6d7c3; text-decoration: none; padding: 12px 16px; border-radius: 10px; font-weight: 700; margin: 6px 0; }
+  </style>
+</head>
+<body>
+  <h1>Залить Холст на телефон через GitHub</h1>
+  <p class="warn">Камера на телефоне работает только по <b>https</b>. GitHub Pages даёт https. После установки иконки компьютер не нужен.</p>
+
+  <h2>Шаг 1. Войди</h2>
+  <div class="step">
+    <a class="btn" href="https://github.com/login" target="_blank" rel="noopener">Открыть вход в GitHub</a>
+  </div>
+
+  <h2>Шаг 2. Создай репозиторий</h2>
+  <div class="step">
+    <a class="btn" href="https://github.com/new" target="_blank" rel="noopener">Создать репозиторий</a>
+    <ol>
+      <li><b>Repository name:</b> <code>holst</code></li>
+      <li><b>Public</b></li>
+      <li>Без README / .gitignore / license</li>
+      <li>Create repository</li>
+    </ol>
+  </div>
+
+  <h2>Шаг 3. Залей файлы</h2>
+  <div class="step">
+    <ol>
+      <li>uploading an existing file</li>
+      <li>Папка <code>Desktop\ЯН\holst-pwa</code> → выдели всё, кроме папки <code>scripts</code> если не хочешь её, и перетащи</li>
+      <li>В корне должен быть <code>index.html</code></li>
+      <li>Commit changes</li>
+    </ol>
+  </div>
+
+  <h2>Шаг 4. Pages</h2>
+  <div class="step">
+    <ol>
+      <li>Settings → Pages</li>
+      <li>Branch: <b>main</b>, папка <b>/ (root)</b></li>
+      <li>Save → подожди 1–2 минуты</li>
+    </ol>
+  </div>
+
+  <h2>Шаг 5. Ссылка на телефоне</h2>
+  <div class="step ok">
+    <p><code>https://yanmag933.github.io/holst/</code></p>
+    <p>Safari / Chrome → Поделиться → На экран «Домой». Дальше открывай иконку «Холст» — без компьютера и можно без интернета.</p>
+  </div>
+</body>
+</html>

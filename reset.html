@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Холст — сброс кэша</title>
+  </head>
+  <body style="font-family:system-ui;background:#14110e;color:#e6d7c3;padding:40px 20px;text-align:center">
+    <p>Обновляю приложение…</p>
+    <script>
+      (function () {
+        var go = function () { location.replace("./index.html"); };
+        if (!("serviceWorker" in navigator)) return go();
+        navigator.serviceWorker.getRegistrations().then(function (regs) {
+          return Promise.all(regs.map(function (r) { return r.unregister(); }));
+        }).then(function () { return caches.keys(); }).then(function (keys) {
+          return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+        }).then(go).catch(go);
+      })();
+    </script>
+  </body>
+</html>
