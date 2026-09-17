@@ -2,20 +2,47 @@
 <html lang="ru">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Холст — сброс кэша</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0c0a08" />
+    <title>Холст — обновление</title>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100dvh;
+        display: grid;
+        place-items: center;
+        background: #0c0a08;
+        color: #f2e6d2;
+        font-family: Palatino, "Times New Roman", serif;
+        text-align: center;
+        padding: 32px 20px;
+      }
+      p { letter-spacing: 0.12em; text-transform: uppercase; font-size: 0.82rem; color: #d4b56a; }
+    </style>
   </head>
-  <body style="font-family:system-ui;background:#14110e;color:#e6d7c3;padding:40px 20px;text-align:center">
-    <p>Обновляю приложение…</p>
+  <body>
+    <p>Обновляю ателье…</p>
     <script>
       (function () {
-        var go = function () { location.replace("./index.html"); };
-        if (!("serviceWorker" in navigator)) return go();
-        navigator.serviceWorker.getRegistrations().then(function (regs) {
-          return Promise.all(regs.map(function (r) { return r.unregister(); }));
-        }).then(function () { return caches.keys(); }).then(function (keys) {
-          return Promise.all(keys.map(function (k) { return caches.delete(k); }));
-        }).then(go).catch(go);
+        var go = function () {
+          location.replace("./index.html?v=" + Date.now());
+        };
+        var steps = [];
+        if ("serviceWorker" in navigator) {
+          steps.push(
+            navigator.serviceWorker.getRegistrations().then(function (regs) {
+              return Promise.all(regs.map(function (r) { return r.unregister(); }));
+            })
+          );
+        }
+        if (window.caches) {
+          steps.push(
+            caches.keys().then(function (keys) {
+              return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+            })
+          );
+        }
+        Promise.all(steps).then(go).catch(go);
       })();
     </script>
   </body>

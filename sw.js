@@ -1,4 +1,4 @@
-const VER = "3";
+const VER = "4";
 
 self.addEventListener("install", (e) => {
   const urls = [
@@ -8,6 +8,7 @@ self.addEventListener("install", (e) => {
     "./icon.svg",
     "./icons/icon-192.png",
     "./icons/icon-512.png",
+    "./icons/apple-touch.png",
     "./css/styles.css?v=" + VER,
     "./js/db.js?v=" + VER,
     "./js/catalog.js?v=" + VER,
@@ -38,6 +39,22 @@ self.addEventListener("activate", (e) => {
 self.addEventListener("fetch", (e) => {
   const req = e.request;
   if (req.method !== "GET") return;
+  const url = req.url;
+  const isNav = req.mode === "navigate" || /index\.html|reset\.html|sw\.js/.test(url);
+  if (isNav) {
+    e.respondWith(
+      fetch(req)
+        .then((res) => {
+          if (res && res.ok) {
+            const copy = res.clone();
+            caches.open("holst-" + VER).then((c) => c.put(req, copy));
+          }
+          return res;
+        })
+        .catch(() => caches.match(req).then((c) => c || caches.match("./index.html")))
+    );
+    return;
+  }
   e.respondWith(
     caches.match(req).then((cached) => {
       const net = fetch(req)

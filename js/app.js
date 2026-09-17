@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VER = "3";
+  const VER = "4";
   const SIZES = [
     [20, 30], [30, 40], [40, 50], [50, 70], [60, 80],
   ];
@@ -112,6 +112,21 @@
   }
 
   function renderTop(title, sub, back) {
+    const home = state.tab === "home" && !back;
+    if (home) {
+      topbar.innerHTML = `
+        <div class="brand-lockup">
+          <img class="brand-mark" src="icons/icon-192.png" alt="" />
+          <div>
+            <p class="eyebrow">ателье</p>
+            <h1>Холст</h1>
+          </div>
+        </div>
+        <button type="button" class="icon-btn" id="go-howto" aria-label="Справка">i</button>
+      `;
+      document.getElementById("go-howto").onclick = () => { state.tab = "howto"; render(); };
+      return;
+    }
     topbar.innerHTML = `
       <div class="row" style="gap:10px;min-width:0">
         ${back ? `<button type="button" class="icon-btn" id="go-back" aria-label="Назад">←</button>` : ""}
@@ -210,18 +225,24 @@
       ${!standalone ? `
       <div class="install-banner">
         <div class="grow">
-          <strong>Поставь на телефон</strong>
-          <div class="tiny">Работает без компьютера: краски, холст и камера остаются на устройстве.</div>
+          <strong>На домашний экран</strong>
+          <div class="tiny">Камера, краски и холст остаются в телефоне — компьютер больше не нужен.</div>
         </div>
-        <button type="button" class="btn row" id="install-btn" style="width:auto">Установить</button>
-      </div>` : `<div class="hint">Приложение на телефоне. Можно рисовать офлайн — всё хранится здесь.</div>`}
+        <button type="button" class="btn row" id="install-btn">Установить</button>
+      </div>` : ""}
       <div class="hero">
-        <p>Собери картину из референсов, а Холст разложит её на этапы и смеси из твоих тюбиков.</p>
+        <p>Собери картину из референсов. Холст разложит её на этапы и смеси из твоих тюбиков — как в мастерской.</p>
       </div>
-      ${list || `<div class="empty">Пока нет картин. Создай первую — укажи размер холста и краски.</div>`}
+      ${list || `<div class="empty">Пока нет картин. Создай первую — размер холста и краски.</div>`}
       <div class="stack">
         <button type="button" class="btn" id="new-project">Новая картина</button>
-        <button type="button" class="btn ghost" id="open-howto">Как описывать цвета и ставить на телефон</button>
+        <button type="button" class="btn ghost" id="open-howto">Цвета и установка</button>
+      </div>
+      <div class="card update-card" style="margin-top:18px">
+        <p class="eyebrow">приложение</p>
+        <h3>Обновить Холст</h3>
+        <p class="tiny">Скачает новую версию с сайта. Картины, краски и референсы не пропадут.</p>
+        <button type="button" class="btn gold" id="update-app">Обновить приложение</button>
       </div>
     `;
     app.querySelectorAll("[data-open]").forEach((b) => b.onclick = () => openProject(b.dataset.open));
@@ -229,27 +250,34 @@
     document.getElementById("open-howto").onclick = () => { state.tab = "howto"; render(); };
     const ib = document.getElementById("install-btn");
     if (ib) ib.onclick = installApp;
+    bindUpdate();
   }
 
   function renderHowTo() {
-    renderTop("На телефон", "один раз открыть — дальше без ПК", true);
+    renderTop("Ателье", "установка и цвета", true);
     app.innerHTML = `
+      <div class="card update-card">
+        <p class="eyebrow">приложение</p>
+        <h3>Обновить Холст</h3>
+        <p class="muted">Нажми — приложение само снимет старый кэш и скачает новую версию. Твои картины останутся.</p>
+        <button type="button" class="btn gold" id="update-app" style="margin-top:12px">Обновить приложение</button>
+      </div>
       <div class="card">
-        <h3>Чтобы не зависеть от компьютера</h3>
-        <p class="muted">1. Открой эту ссылку в Safari или Chrome на телефоне.<br>
+        <h3>На телефон</h3>
+        <p class="muted">1. Открой ссылку в Safari или Chrome.<br>
         2. iPhone: Поделиться → На экран «Домой».<br>
         3. Android: меню → Установить приложение.<br>
-        4. Запускай иконку «Холст». Камера, референсы и краски живут в телефоне, даже без интернета.</p>
+        4. Дальше запускай иконку «Холст» — без компьютера и можно без интернета.</p>
       </div>
       <div class="card">
-        <h3>Как лучше задать цвет краски</h3>
-        <p class="muted"><b>Лучший способ — название с тюбика.</b> Пиши «ультрамарин», «охра светлая», «белила титановые». Приложение сразу показывает цвет, ты подкручиваешь его на месте.</p>
-        <p class="muted"><b>Фото — запасной путь.</b> Не снимай этикетку: печать врёт. Выдави мазок на белую бумагу при дневном свете у окна, сфотографируй и ткни в центр мазка.</p>
-        <p class="muted">Не снимай в жёлтой лампе и не лови блик. Если цвет чуть не тот — ползунки Оттенок / Яркость поправят за 5 секунд.</p>
+        <h3>Как задать цвет краски</h3>
+        <p class="muted"><b>Лучше название с тюбика.</b> Пиши «ультрамарин», «охра светлая», «белила титановые». Цвет появится сразу — подкрути, если мазок в жизни чуть другой.</p>
+        <p class="muted"><b>Фото — запасной путь.</b> Не снимай этикетку. Выдави мазок на белую бумагу у окна, днём, без блика, ткни в центр.</p>
       </div>
-      <button type="button" class="btn" id="to-home">К картинам</button>
+      <button type="button" class="btn ghost" id="to-home">К картинам</button>
     `;
     document.getElementById("to-home").onclick = () => { state.tab = "home"; render(); };
+    bindUpdate();
   }
 
   function renderNew() {
@@ -1049,6 +1077,20 @@
     }
     state.tab = "howto";
     render();
+  }
+
+  function bindUpdate() {
+    const btn = document.getElementById("update-app");
+    if (btn) btn.onclick = updateApp;
+  }
+
+  function updateApp() {
+    const btn = document.getElementById("update-app");
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "Обновляю…";
+    }
+    location.replace("./reset.html?t=" + Date.now());
   }
 
   window.addEventListener("beforeinstallprompt", (e) => {
