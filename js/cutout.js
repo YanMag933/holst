@@ -401,77 +401,239 @@ window.Cutout = (function () {
     return kept;
   }
 
-  async function extract(image, scribbleCanvas, opts) {
-    const maxW = (opts && opts.maxW) || 512;
-    const nw = image.naturalWidth || image.width;
-    const nh = image.naturalHeight || image.height;
-    const scale = Math.min(1, maxW / Math.max(nw, 1));
-    const w = Math.max(2, Math.round(nw * scale));
-    const h = Math.max(2, Math.round(nh * scale));
+  function canvasFrom(image, w, h) {
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = h;
+    c.getContext("2d").drawImage(image, 0, 0, w, h);
+    return c;
+  }
 
-    const src = document.createElement("canvas");
-    src.width = w;
-    src.height = h;
-    const sctx = src.getContext("2d", { willReadFrequently: true });
-    sctx.drawImage(image, 0, 0, w, h);
-    const srcData = sctx.getImageData(0, 0, w, h).data;
-
-    const sc = document.createElement("canvas");
-    sc.width = w;
-    sc.height = h;
-    sc.getContext("2d").drawImage(scribbleCanvas, 0, 0, w, h);
-    const sd = sc.getContext("2d").getImageData(0, 0, w, h).data;
+  function readScribble(canvas, w, h) {
+    const c = canvasFrom(canvas, w, h);
+    const sd = c.getContext("2d").getImageData(0, 0, w, h).data;
     const scribble = new Uint8Array(w * h);
     for (let i = 0; i < w * h; i++) if (sd[i * 4 + 3] > 18) scribble[i] = 1;
-    if (countOn(scribble) < 12) {
-      throw new Error("Закрась предмет пятном — нейросеть доведёт края сама.");
-    }
+    return scribble;
+  }
 
-    let mask = null;
-    let nnScore = 0;
-    try {
-      mask = await nnMask(src, scribble, w, h);
-      nnScore = scoreMask(mask, scribble, w, h);
-    } catch (e) {
-      mask = null;
-    }
-    try {
-      const geo = geodesicMask(srcData, scribble, w, h);
-      const geoScore = scoreMask(geo, scribble, w, h);
-      if (!mask || geoScore > nnScore) mask = geo;
-    } catch (e) {
-      if (!mask) throw e;
-    }
+  function cropCanvas(image, box, nw, nh) {
+    const sx = (box.minX / box.sw) * nw;
+    const sy = (box.minY / box.sh) * nh;
+    const sw = ((box.maxX - box.minX + 1) / box.sw) * nw;
+    const sh = ((box.maxY - box.minY + 1) / box.sh) * nh;
+    const maxSide = 768;
+    const scale = Math.min(1, maxSide / Math.max(sw, sh, 1));
+    const c = document.createElement("canvas");
+    c.width = Math.max(2, Math.round(sw * scale));
+    c.height = Math.max(2, Math.round(sh * scale));
+    c.getContext("2d").drawImage(image, sx, sy, sw, sh, 0, 0, c.width, c.height);
+    return { canvas: c, sx, sy, sw, sh };
+  }
 
-    const box = bboxOf(mask, w, h, 4);
+  function maskFromAlpha(canvas) {
+    const w = canvas.width, h = canvas.height;
+    const d = canvas.getContext("2d").getImageData(0, 0, w, h).data;
+    const mask = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) if (d[i * 4 + 3] > 28) mask[i] = 1;
+    return mask;
+  }
+
+  async function blobToCanvas(blob) {
+    const url = URL.createObjectURL(blob);
+    try {
+      const img = await new Promise((res, rej) => {
+        const im = new Image();
+        im.onload = () => res(im);
+        im.onerror = rej;
+        im.src = url;
+      });
+      return canvasFrom(img, img.naturalWidth || img.width, img.naturalHeight || img.height);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  function finishWithMask(image, mask, mw, mh, nw, nh) {
+    const box = bboxOf(mask, mw, mh, 3);
     if (box.n < 40) throw new Error("Не нашла предмет. Закрась его щедрее.");
-    const alpha = feather(mask, w, h, 2);
+    const alpha = feather(mask, mw, mh, 2);
     const cw = box.maxX - box.minX + 1;
     const ch = box.maxY - box.minY + 1;
     const out = document.createElement("canvas");
-    out.width = Math.max(2, Math.round((cw / w) * nw));
-    out.height = Math.max(2, Math.round((ch / h) * nh));
+    out.width = Math.max(2, Math.round((cw / mw) * nw));
+    out.height = Math.max(2, Math.round((ch / mh) * nh));
     const octx = out.getContext("2d");
     octx.drawImage(
       image,
-      (box.minX / w) * nw,
-      (box.minY / h) * nh,
-      (cw / w) * nw,
-      (ch / h) * nh,
+      (box.minX / mw) * nw,
+      (box.minY / mh) * nh,
+      (cw / mw) * nw,
+      (ch / mh) * nh,
       0, 0, out.width, out.height
     );
     const img = octx.getImageData(0, 0, out.width, out.height);
     for (let y = 0; y < out.height; y++) {
       for (let x = 0; x < out.width; x++) {
-        const mx = Math.min(w - 1, Math.round(box.minX + (x / out.width) * cw));
-        const my = Math.min(h - 1, Math.round(box.minY + (y / out.height) * ch));
-        img.data[(y * out.width + x) * 4 + 3] = alpha[my * w + mx] || 0;
+        const mx = Math.min(mw - 1, Math.round(box.minX + (x / out.width) * cw));
+        const my = Math.min(mh - 1, Math.round(box.minY + (y / out.height) * ch));
+        img.data[(y * out.width + x) * 4 + 3] = alpha[my * mw + mx] || 0;
       }
     }
     octx.putImageData(img, 0, 0);
+    return out;
+  }
+
+  let bg = null;
+  let bgPromise = null;
+
+  async function loadBg(onProgress) {
+    if (bg) return bg;
+    if (bgPromise) return bgPromise;
+    bgPromise = (async () => {
+      const tell = (s) => { if (onProgress) onProgress(s); };
+      tell("Загружаю модель снятия фона…");
+      try {
+        await import("https://cdn.jsdelivr.net/npm/onnxruntime-web@1.21.0/dist/ort.wasm.min.js");
+      } catch (e) {}
+      try {
+        const mod = await import("https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.5.5/+esm");
+        const fn = mod.default || mod.removeBackground;
+        if (typeof fn === "function") {
+          bg = {
+            kind: "imgly",
+            run: async (input) => {
+              const cfg = {
+                model: "isnet_quint8",
+                output: { format: "image/png", type: "foreground" },
+                progress: (k, c, t) => tell("Снимаю фон… " + Math.round((c / Math.max(1, t)) * 100) + "%"),
+              };
+              try {
+                return await fn(input, Object.assign({
+                  publicPath: "https://cdn.jsdelivr.net/npm/@imgly/background-removal-data@1.5.5/dist/",
+                }, cfg));
+              } catch (e) {
+                return await fn(input, cfg);
+              }
+            },
+          };
+          return bg;
+        }
+      } catch (e) {}
+      const tf = await import("https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1");
+      const pipeline = tf.pipeline || (tf.default && tf.default.pipeline);
+      const env = tf.env || (tf.default && tf.default.env);
+      if (env) env.allowLocalModels = false;
+      tell("Качаю сеть вырезания предметов…");
+      const progress_callback = (p) => {
+        if (p && p.status === "progress" && p.total) {
+          tell("Качаю сеть… " + Math.round((p.loaded / p.total) * 100) + "%");
+        }
+      };
+      let pipe;
+      try {
+        pipe = await pipeline("background-removal", "briaai/RMBG-1.4", { dtype: "q8", progress_callback });
+      } catch (e) {
+        pipe = await pipeline("image-segmentation", "Xenova/modnet", { dtype: "q8", progress_callback });
+      }
+      bg = {
+        kind: "hf",
+        run: async (input) => {
+          const url = input.toDataURL ? input.toDataURL("image/jpeg", 0.92) : input;
+          const out = await pipe(url);
+          const first = Array.isArray(out) ? out[0] : out;
+          if (first && first.toBlob) return first.toBlob();
+          if (first && first.mask && first.mask.toBlob) return first.mask.toBlob();
+          if (first instanceof Blob) return first;
+          throw new Error("bad-hf");
+        },
+      };
+      return bg;
+    })();
+    try {
+      return await bgPromise;
+    } catch (e) {
+      bgPromise = null;
+      throw e;
+    }
+  }
+
+  async function bgMask(cropCanvas, scribble, w, h, onProgress) {
+    const engine = await Promise.race([
+      loadBg(onProgress),
+      new Promise((_, rej) => setTimeout(() => rej(new Error("bg-timeout")), 45000)),
+    ]);
+    const blob = await Promise.race([
+      engine.run(cropCanvas),
+      new Promise((_, rej) => setTimeout(() => rej(new Error("bg-timeout")), 60000)),
+    ]);
+    const fg = await blobToCanvas(blob);
+    const scaled = canvasFrom(fg, w, h);
+    const raw = maskFromAlpha(scaled);
+    const kept = keepTouchingScribble(raw, scribble, w, h);
+    if (scoreMask(kept, scribble, w, h) < 0.08) throw new Error("bg-miss");
+    return kept;
+  }
+
+  async function extract(image, scribbleCanvas, opts) {
+    const onProgress = opts && opts.onProgress;
+    const nw = image.naturalWidth || image.width;
+    const nh = image.naturalHeight || image.height;
+    const work = Math.min(640, Math.max(nw, nh));
+    const scale = Math.min(1, work / Math.max(nw, 1));
+    const w = Math.max(2, Math.round(nw * scale));
+    const h = Math.max(2, Math.round(nh * scale));
+    const scribble = readScribble(scribbleCanvas, w, h);
+    if (countOn(scribble) < 12) {
+      throw new Error("Закрась предмет пятном — сеть доведёт край сама.");
+    }
+
+    const tight = bboxOf(scribble, w, h, 0);
+    const pad = Math.max(10, Math.round(0.18 * Math.max(tight.maxX - tight.minX + 1, tight.maxY - tight.minY + 1)));
+    const loose = bboxOf(scribble, w, h, pad);
+    loose.sw = w;
+    loose.sh = h;
+    const crop = cropCanvas(image, loose, nw, nh);
+    const cw = crop.canvas.width;
+    const ch = crop.canvas.height;
+    const workScribble = canvasFrom(scribbleCanvas, w, h);
+    const mapped = document.createElement("canvas");
+    mapped.width = cw;
+    mapped.height = ch;
+    mapped.getContext("2d").drawImage(
+      workScribble,
+      loose.minX, loose.minY, loose.maxX - loose.minX + 1, loose.maxY - loose.minY + 1,
+      0, 0, cw, ch
+    );
+    const scribCrop = readScribble(mapped, cw, ch);
+
+    let mask = null;
+    let score = 0;
+    try {
+      if (onProgress) onProgress("Снимаю фон, как в стикерах…");
+      mask = await bgMask(crop.canvas, scribCrop, cw, ch, onProgress);
+      score = scoreMask(mask, scribCrop, cw, ch);
+    } catch (e) {
+      mask = null;
+    }
+    try {
+      const nn = await nnMask(crop.canvas, scribCrop, cw, ch);
+      const sc = scoreMask(nn, scribCrop, cw, ch);
+      if (!mask || sc > score) { mask = nn; score = sc; }
+    } catch (e) {}
+    try {
+      const srcData = crop.canvas.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, cw, ch).data;
+      const geo = geodesicMask(srcData, scribCrop, cw, ch);
+      const sc = scoreMask(geo, scribCrop, cw, ch);
+      if (!mask || sc > score) mask = geo;
+    } catch (e) {
+      if (!mask) throw e;
+    }
+
+    const out = finishWithMask(crop.canvas, mask, cw, ch, cw, ch);
     const blob = await new Promise((res) => out.toBlob(res, "image/png"));
     return { blob, width: out.width, height: out.height };
   }
 
-  return { extract, loadNN };
+  return { extract, loadNN, loadBg };
 })();

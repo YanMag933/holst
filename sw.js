@@ -1,4 +1,4 @@
-const VER = "6";
+const VER = "7";
 
 self.addEventListener("install", (e) => {
   const urls = [

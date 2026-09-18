@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VER = "6";
+  const VER = "7";
   const SIZES = [
     [20, 30], [30, 40], [40, 50], [50, 70], [60, 80],
   ];
@@ -815,7 +815,10 @@
         <button type="button" class="btn ghost row" id="cut-erase">ластик</button>
         <button type="button" class="btn ghost row" id="cut-clear">очистить</button>
       </div>
-      <p class="tiny" style="margin:0 0 10px">Закрась предмет небрежно полупрозрачным маркером. Нейросеть снимет фон и обрежет по его контуру.</p>
+      <label class="field">Прозрачность маркера
+        <input id="mark-op" type="range" min="15" max="85" value="50" />
+      </label>
+      <p class="tiny" style="margin:0 0 10px">Закрась нужный предмет. Сеть снимет фон только на этом куске — как стикер.</p>
       <label class="field">Как назвать предмет
         <input id="cut-name" placeholder="яблоко, кувшин, дерево…" />
       </label>
@@ -829,10 +832,12 @@
     const draw = document.getElementById("cut-draw");
     const stage = document.getElementById("stage");
     cutImg = await loadImage(url);
+    Cutout.loadBg().catch(() => {});
     Cutout.loadNN().catch(() => {});
     let erase = false;
     let drawing = false;
     let box = { x: 0, y: 0, w: 1, h: 1 };
+    let markOp = 0.5;
 
     function fitCut() {
       const sw = stage.clientWidth || 320;
@@ -872,6 +877,9 @@
       const dpr = Math.min(2, window.devicePixelRatio || 1);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
+    document.getElementById("mark-op").oninput = (e) => {
+      markOp = Number(e.target.value) / 100;
+    };
     function pos(e) {
       const r = draw.getBoundingClientRect();
       const pt = e.touches ? e.touches[0] : e;
@@ -886,10 +894,10 @@
       ctx.lineWidth = Number(document.getElementById("brush").value);
       if (erase) {
         ctx.globalCompositeOperation = "destination-out";
-        ctx.strokeStyle = "rgba(0,0,0,0.55)";
+        ctx.strokeStyle = "rgba(0,0,0," + markOp + ")";
       } else {
         ctx.globalCompositeOperation = "source-over";
-        ctx.strokeStyle = "rgba(255, 70, 160, 0.5)";
+        ctx.strokeStyle = "rgba(255, 70, 160," + markOp + ")";
       }
       ctx.beginPath();
       ctx.moveTo(p0.x, p0.y);
@@ -917,13 +925,19 @@
       const btn = document.getElementById("do-cut");
       if (btn.disabled) return;
       btn.disabled = true;
-      msg.textContent = "Загружаю нейросеть и ищу контур…";
+      msg.textContent = "Снимаю фон с предмета в мазке…";
       try {
+        const seen = document.createElement("canvas");
+        seen.width = cutImg.naturalWidth;
+        seen.height = cutImg.naturalHeight;
+        seen.getContext("2d").drawImage(base, 0, 0, seen.width, seen.height);
         const tmp = document.createElement("canvas");
-        tmp.width = cutImg.naturalWidth;
-        tmp.height = cutImg.naturalHeight;
+        tmp.width = seen.width;
+        tmp.height = seen.height;
         tmp.getContext("2d").drawImage(draw, 0, 0, tmp.width, tmp.height);
-        const out = await Cutout.extract(cutImg, tmp);
+        const out = await Cutout.extract(seen, tmp, {
+          onProgress: (s) => { msg.textContent = s; },
+        });
         const preview = document.getElementById("cut-preview");
         const url = URL.createObjectURL(out.blob);
         msg.textContent = "Проверь: это тот предмет? Если нет — закрась его плотнее по центру и вырежи снова.";
