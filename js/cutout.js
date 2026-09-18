@@ -162,26 +162,64 @@ window.Cutout = (function () {
     return { src, sw, sh, kind };
   }
 
-  function packedToMask(packed, w, h) {
+  function packedToMask(packed, w, h, invert) {
     if (!packed) return null;
     const { src, sw, sh, kind } = packed;
-    let preferOne = true;
-    if (kind !== "f") {
-      let ones = 0;
-      for (let i = 0; i < src.length; i++) if (src[i]) ones++;
-      preferOne = ones > 0 && ones <= src.length / 2;
-    }
     const out = new Uint8Array(w * h);
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
         const sx = Math.min(sw - 1, Math.round((x / w) * sw));
         const sy = Math.min(sh - 1, Math.round((y / h) * sh));
         const v = src[sy * sw + sx];
-        const on = kind === "f" ? v > 0.42 : (preferOne ? v > 0 : v === 0);
+        let on = kind === "f" ? v > 0.5 : v > 0;
+        if (invert) on = !on;
         if (on) out[y * w + x] = 1;
       }
     }
     return out;
+  }
+
+  function invertMask(mask) {
+    const out = new Uint8Array(mask.length);
+    for (let i = 0; i < mask.length; i++) out[i] = mask[i] ? 0 : 1;
+    return out;
+  }
+
+  function clampToNeighborhood(mask, scribble, w, h) {
+    const box = bboxOf(scribble, w, h, 0);
+    const bw = Math.max(1, box.maxX - box.minX + 1);
+    const bh = Math.max(1, box.maxY - box.minY + 1);
+    const pad = Math.max(24, Math.round(0.9 * Math.max(bw, bh)), Math.round(0.12 * Math.min(w, h)));
+    const minX = Math.max(0, box.minX - pad);
+    const minY = Math.max(0, box.minY - pad);
+    const maxX = Math.min(w - 1, box.maxX + pad);
+    const maxY = Math.min(h - 1, box.maxY + pad);
+    const out = new Uint8Array(mask.length);
+    for (let y = minY; y <= maxY; y++) {
+      for (let x = minX; x <= maxX; x++) {
+        const i = y * w + x;
+        if (mask[i]) out[i] = 1;
+      }
+    }
+    return out;
+  }
+
+  function scoreMask(mask, scribble, w, h) {
+    let inter = 0, scribN = 0, maskN = 0;
+    for (let i = 0; i < mask.length; i++) {
+      if (scribble[i]) scribN++;
+      if (mask[i]) {
+        maskN++;
+        if (scribble[i]) inter++;
+      }
+    }
+    if (!scribN || !maskN) return 0;
+    const coverage = inter / scribN;
+    const areaRatio = maskN / scribN;
+    if (coverage < 0.4) return 0;
+    if (maskN / (w * h) > 0.55) return 0;
+    if (areaRatio > 28) return 0;
+    return coverage * coverage / Math.sqrt(Math.max(1, areaRatio));
   }
 
   function runSegment(seg, image, roi) {
@@ -259,33 +297,31 @@ window.Cutout = (function () {
     }
   }
 
+  function consider(raw, scribble, w, h, best) {
+    if (!raw) return best;
+    const cands = [raw, invertMask(raw)];
+    for (const cand of cands) {
+      const clamped = clampToNeighborhood(cand, scribble, w, h);
+      const kept = keepTouchingScribble(clamped, scribble, w, h);
+      const sc = scoreMask(kept, scribble, w, h);
+      if (sc > best.score) best = { score: sc, mask: kept };
+    }
+    return best;
+  }
+
   async function nnMask(image, scribble, w, h) {
     const { seg } = await loadNN();
-    const pts = scribblePoints(scribble, w, h, 10);
+    const pts = scribblePoints(scribble, w, h, 5);
     if (!pts.length) throw new Error("empty");
-    const tries = [
-      { scribble: pts },
-      { keypoint: pts[0] },
-      pts.slice(0, 4).map((p) => ({ keypoint: p })),
-    ];
-    let acc = new Uint8Array(w * h);
-    let best = 0;
-    for (const roi of tries) {
-      const list = Array.isArray(roi) ? roi : [roi];
-      for (const one of list) {
-        try {
-          const packed = await runSegment(seg, image, one);
-          const m = packedToMask(packed, w, h);
-          if (!m) continue;
-          const kept = keepTouchingScribble(m, scribble, w, h);
-          const n = countOn(kept);
-          if (n > best) { best = n; acc = kept; }
-        } catch (e) {}
-      }
+    let best = { score: 0, mask: null };
+    for (const pt of pts.slice(0, 3)) {
+      try {
+        const packed = await runSegment(seg, image, { keypoint: pt });
+        best = consider(packedToMask(packed, w, h, false), scribble, w, h, best);
+      } catch (e) {}
     }
-    if (best < 80) throw new Error("tiny");
-    if (best / (w * h) > 0.88) throw new Error("too-big");
-    return acc;
+    if (!best.mask || best.score < 0.06) throw new Error("tiny");
+    return best.mask;
   }
 
   function geodesicMask(srcData, scribble, w, h) {
@@ -359,8 +395,8 @@ window.Cutout = (function () {
       }
     }
     fillHoles(mask, w, h, box);
-    const kept = keepTouchingScribble(mask, scribble, w, h);
-    if (countOn(kept) < 40) throw new Error("Не нашла предмет. Закрась его щедрее.");
+    const kept = keepTouchingScribble(clampToNeighborhood(mask, scribble, w, h), scribble, w, h);
+    if (scoreMask(kept, scribble, w, h) < 0.05) throw new Error("Не нашла предмет. Закрась его щедрее.");
     if (countOn(kept) > bw * bh * 0.97) throw new Error("too-big");
     return kept;
   }
@@ -392,10 +428,19 @@ window.Cutout = (function () {
     }
 
     let mask = null;
+    let nnScore = 0;
     try {
       mask = await nnMask(src, scribble, w, h);
+      nnScore = scoreMask(mask, scribble, w, h);
     } catch (e) {
-      mask = geodesicMask(srcData, scribble, w, h);
+      mask = null;
+    }
+    try {
+      const geo = geodesicMask(srcData, scribble, w, h);
+      const geoScore = scoreMask(geo, scribble, w, h);
+      if (!mask || geoScore > nnScore) mask = geo;
+    } catch (e) {
+      if (!mask) throw e;
     }
 
     const box = bboxOf(mask, w, h, 4);

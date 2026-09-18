@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VER = "5";
+  const VER = "6";
   const SIZES = [
     [20, 30], [30, 40], [40, 50], [50, 70], [60, 80],
   ];
@@ -26,7 +26,8 @@
   let deferredPrompt = null;
   let cutImg = null;
   let photoImg = null;
-  let busy = false;
+  let filmGen = 0;
+  const MAX_REFS = 3;
 
   const app = document.getElementById("app");
   const topbar = document.getElementById("topbar");
@@ -97,6 +98,56 @@
       img.onerror = rej;
       img.src = url;
     });
+  }
+
+  async function ingestImage(file) {
+    let bmp = null;
+    if (typeof createImageBitmap === "function") {
+      try {
+        bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
+      } catch (e) {
+        try { bmp = await createImageBitmap(file); } catch (e2) {}
+      }
+    }
+    const canvas = document.createElement("canvas");
+    let w, h, paint;
+    if (bmp) {
+      w = bmp.width;
+      h = bmp.height;
+      paint = (ctx, dw, dh) => ctx.drawImage(bmp, 0, 0, dw, dh);
+    } else {
+      const tmp = URL.createObjectURL(file);
+      try {
+        const img = await loadImage(tmp);
+        w = img.naturalWidth;
+        h = img.naturalHeight;
+        paint = (ctx, dw, dh) => ctx.drawImage(img, 0, 0, dw, dh);
+      } finally {
+        URL.revokeObjectURL(tmp);
+      }
+    }
+    const scale = Math.min(1, 1600 / Math.max(w, 1));
+    canvas.width = Math.max(1, Math.round(w * scale));
+    canvas.height = Math.max(1, Math.round(h * scale));
+    paint(canvas.getContext("2d"), canvas.width, canvas.height);
+    if (bmp && bmp.close) bmp.close();
+    const blob = await new Promise((res) => canvas.toBlob((b) => res(b || file), "image/jpeg", 0.88));
+    return blob;
+  }
+
+  async function forgetFile(key) {
+    if (urls[key]) {
+      URL.revokeObjectURL(urls[key]);
+      delete urls[key];
+    }
+    await HolstDB.delFile(key).catch(() => {});
+  }
+
+  async function pruneRefs(p) {
+    while (p.refs.length > MAX_REFS) {
+      const old = p.refs.shift();
+      await forgetFile("ref:" + old.id);
+    }
   }
 
   function amountLabel(id) {
@@ -561,12 +612,12 @@
   async function renderCompose(p) {
     renderTop("Композиция", "вырежи предметы и разложи на холсте");
     app.innerHTML = `
-      <div class="field">Референсы</div>
+      <div class="field">Референсы — не больше трёх, старые стираются</div>
       <div class="film" id="ref-film"></div>
       <div class="row" style="margin-bottom:12px">
         <button type="button" class="btn ghost" id="add-ref">+ Картинка</button>
       </div>
-      <input id="ref-file" type="file" accept="image/*" multiple hidden />
+      <input id="ref-file" type="file" accept="image/*" hidden />
       <div class="field">Вырезанные предметы — нажми, чтобы положить на холст</div>
       <div class="film" id="cut-film"></div>
       <div class="easel-wrap" id="easel-wrap"><canvas id="easel"></canvas></div>
@@ -577,24 +628,30 @@
         <button type="button" class="btn ghost row" data-nudge="rot-right">↻</button>
         <button type="button" class="btn ghost row" data-nudge="back">назад</button>
         <button type="button" class="btn ghost row" data-nudge="front">вперёд</button>
-        <button type="button" class="btn danger row" id="del-sticker">убрать</button>
       </div>
-      <p class="tiny" style="margin:8px 0 10px">Размер меняется равномерно, без растягивания. На холсте можно перетаскивать пальцем, щипком крутить и масштабировать.</p>
+      <button type="button" class="btn danger" id="del-sticker" style="margin-top:10px">Удалить объект с холста</button>
+      <p class="tiny" id="del-hint" style="margin:8px 0 10px">Нажми предмет на холсте, потом эту кнопку. Размер меняется равномерно, без растягивания.</p>
       <label class="field">Сетка
         <select id="grid-n">
           ${[3, 4, 5, 6, 8].map((n) => `<option value="${n}" ${p.gridN === n ? "selected" : ""}>${n}×${n}</option>`).join("")}
         </select>
       </label>
     `;
+    await pruneRefs(p);
     await fillFilms(p);
     document.getElementById("add-ref").onclick = () => document.getElementById("ref-file").click();
     document.getElementById("ref-file").onchange = async (e) => {
-      const files = Array.from(e.target.files || []);
-      for (const f of files) {
-        const id = uid("r");
-        await HolstDB.putFile("ref:" + id, f);
-        p.refs.push({ id, name: f.name || "референс" });
-      }
+      const input = e.target;
+      const file = input.files && input.files[0];
+      input.value = "";
+      if (!file) return;
+      const named = /\.(jpe?g|png|webp|heic|heif|gif|bmp)$/i.test(file.name || "");
+      if (file.type && !file.type.startsWith("image") && !named) return;
+      const blob = await ingestImage(file);
+      const id = uid("r");
+      await HolstDB.putFile("ref:" + id, blob);
+      p.refs.push({ id, name: file.name || "референс" });
+      await pruneRefs(p);
       save();
       render();
     };
@@ -607,44 +664,84 @@
       b.onclick = () => easel && easel.nudge(b.dataset.nudge);
     });
     document.getElementById("del-sticker").onclick = () => {
+      const hint = document.getElementById("del-hint");
       if (!easel) return;
+      if (!easel.selectedId) {
+        if (!easel.stickers.length) {
+          hint.textContent = "На холсте пусто — сначала положи вырезанный предмет.";
+          return;
+        }
+        easel.selectedId = easel.stickers[easel.stickers.length - 1].id;
+      }
       easel.removeSelected();
       p.stickers = easel.stickers;
       p.analysis = null;
       save();
+      hint.textContent = "Объект снят с холста.";
     };
     mountEasel(p);
   }
 
   async function fillFilms(p) {
+    const gen = ++filmGen;
     const refFilm = document.getElementById("ref-film");
     const cutFilm = document.getElementById("cut-film");
+    if (!refFilm || !cutFilm) return;
     refFilm.innerHTML = "";
+    cutFilm.innerHTML = "";
     for (const r of p.refs) {
       const url = await fileUrl("ref:" + r.id);
-      const el = document.createElement("button");
-      el.type = "button";
+      if (gen !== filmGen) return;
+      const el = document.createElement("div");
       el.className = "film-item";
-      el.innerHTML = `<img src="${esc(url)}" alt=""/><span>вырезать</span>`;
-      el.onclick = () => {
+      el.innerHTML = `
+        <button type="button" class="film-open">
+          <img src="${esc(url)}" alt=""/>
+          <span>вырезать</span>
+        </button>
+        <button type="button" class="film-x" aria-label="Удалить картинку">×</button>
+      `;
+      el.querySelector(".film-open").onclick = () => {
         state.ui.refId = r.id;
         state.tab = "cutout";
+        save();
+        render();
+      };
+      el.querySelector(".film-x").onclick = async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        p.refs = p.refs.filter((x) => x.id !== r.id);
+        await forgetFile("ref:" + r.id);
+        if (state.ui.refId === r.id) state.ui.refId = null;
         save();
         render();
       };
       refFilm.appendChild(el);
     }
     if (!p.refs.length) {
-      refFilm.innerHTML = `<div class="muted">Загрузи скрины и фото — из каждой картинки возьмём по кусочку.</div>`;
+      refFilm.innerHTML = `<div class="muted">Загрузи одну картинку. Хранятся текущая и две предыдущие.</div>`;
     }
-    cutFilm.innerHTML = "";
     for (const c of p.cutouts) {
       const url = await fileUrl("cut:" + c.id);
-      const el = document.createElement("button");
-      el.type = "button";
+      if (gen !== filmGen) return;
+      const el = document.createElement("div");
       el.className = "film-item";
-      el.innerHTML = `<img src="${esc(url)}" alt=""/><span>${esc(c.name || "на холст")}</span>`;
-      el.onclick = () => placeCutout(p, c);
+      el.innerHTML = `
+        <button type="button" class="film-open">
+          <img src="${esc(url)}" alt=""/>
+          <span>${esc(c.name || "на холст")}</span>
+        </button>
+        <button type="button" class="film-x" aria-label="Удалить предмет">×</button>
+      `;
+      el.querySelector(".film-open").onclick = () => placeCutout(p, c);
+      el.querySelector(".film-x").onclick = async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        p.cutouts = p.cutouts.filter((x) => x.id !== c.id);
+        await forgetFile("cut:" + c.id);
+        save();
+        render();
+      };
       cutFilm.appendChild(el);
     }
     if (!p.cutouts.length) {
@@ -725,6 +822,7 @@
       <div class="stack" style="margin-top:12px">
         <button type="button" class="btn" id="do-cut">Вырезать</button>
         <p class="tiny" id="cut-msg"></p>
+        <div id="cut-preview" hidden></div>
       </div>
     `;
     const base = document.getElementById("cut-base");
@@ -826,13 +924,31 @@
         tmp.height = cutImg.naturalHeight;
         tmp.getContext("2d").drawImage(draw, 0, 0, tmp.width, tmp.height);
         const out = await Cutout.extract(cutImg, tmp);
-        const id = uid("c");
-        await HolstDB.putFile("cut:" + id, out.blob);
-        const name = document.getElementById("cut-name").value.trim() || "предмет";
-        p.cutouts.push({ id, name });
-        save();
-        state.tab = "compose";
-        render();
+        const preview = document.getElementById("cut-preview");
+        const url = URL.createObjectURL(out.blob);
+        msg.textContent = "Проверь: это тот предмет? Если нет — закрась его плотнее по центру и вырежи снова.";
+        preview.hidden = false;
+        preview.innerHTML = `
+          <div class="cut-preview check"><img src="${url}" alt="вырезанный предмет" /></div>
+          <button type="button" class="btn" id="cut-keep">Да, это он</button>
+          <button type="button" class="btn ghost" id="cut-retry">Вырезать заново</button>
+        `;
+        document.getElementById("cut-keep").onclick = async () => {
+          const id = uid("c");
+          await HolstDB.putFile("cut:" + id, out.blob);
+          const name = document.getElementById("cut-name").value.trim() || "предмет";
+          p.cutouts.push({ id, name });
+          save();
+          state.tab = "compose";
+          render();
+        };
+        document.getElementById("cut-retry").onclick = () => {
+          URL.revokeObjectURL(url);
+          preview.hidden = true;
+          preview.innerHTML = "";
+          btn.disabled = false;
+          msg.textContent = "Закрась нужный предмет ещё раз — сеть смотрит только внутрь мазка.";
+        };
       } catch (err) {
         btn.disabled = false;
         msg.textContent = err.message || "Не вышло. Закрась предмет пятном и попробуй ещё раз.";

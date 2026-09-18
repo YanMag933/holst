@@ -258,9 +258,39 @@ img { max-width: 100%; display: block; }
 .easel-wrap canvas { display: block; max-width: 100%; max-height: 100%; }
 
 .film { display: flex; gap: 8px; overflow-x: auto; padding: 4px 0 8px; }
-.film-item {
-  flex: 0 0 auto; width: 84px; text-align: center; color: var(--muted); font-size: 0.7rem;
+.film-item { position: relative; flex: 0 0 auto; width: 84px; text-align: center; color: var(--muted); font-size: 0.7rem; }
+.film-item .film-open {
+  display: block;
+  width: 84px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.7rem;
 }
+.film-item .film-open img { width: 84px; height: 84px; object-fit: cover; border-radius: 14px; }
+.film-item .film-x {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #2a1814;
+  color: var(--linen);
+  border: 1px solid rgba(196,92,92,0.55);
+  font-size: 14px;
+  line-height: 1;
+  z-index: 2;
+}
+.cut-preview {
+  margin: 8px 0;
+  border-radius: 16px;
+  overflow: hidden;
+  min-height: 120px;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+}
+.cut-preview img { max-width: 100%; max-height: 220px; }
 .film-item img, .film-item .ph {
   width: 84px; height: 84px; object-fit: cover; border-radius: 14px;
   border: 1px solid var(--line); background:
