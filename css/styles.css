@@ -321,6 +321,18 @@ img { max-width: 100%; display: block; }
 
 .tools { display: flex; gap: 8px; align-items: center; margin: 10px 0; }
 .tools input[type="range"] { flex: 1; }
+.btn.ghost.on {
+  background: rgba(212, 181, 106, 0.22);
+  border-color: var(--gold);
+  color: var(--gold);
+}
+.mark-pm {
+  min-width: 46px;
+  font-size: 1.45rem;
+  font-weight: 650;
+  line-height: 1;
+}
+#op-val { text-transform: none; letter-spacing: 0; color: var(--linen); }
 
 .verdict { padding: 14px 16px; border-radius: 16px; margin-bottom: 12px; border: 1px solid var(--line); }
 .verdict.ok { background: rgba(122,154,114,0.16); }

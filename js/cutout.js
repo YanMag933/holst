@@ -630,10 +630,46 @@ window.Cutout = (function () {
       if (!mask) throw e;
     }
 
-    const out = finishWithMask(crop.canvas, mask, cw, ch, cw, ch);
-    const blob = await new Promise((res) => out.toBlob(res, "image/png"));
-    return { blob, width: out.width, height: out.height };
+    const cut = applyAlpha(crop.canvas, mask, cw, ch);
+    const blob = await new Promise((res) => cut.toBlob(res, "image/png"));
+    return { blob, width: cut.width, height: cut.height, rgb: crop.canvas, cut };
   }
 
-  return { extract, loadNN, loadBg };
+  function applyAlpha(image, mask, w, h) {
+    const out = canvasFrom(image, w, h);
+    const ctx = out.getContext("2d");
+    const img = ctx.getImageData(0, 0, w, h);
+    const alpha = feather(mask, w, h, 2);
+    for (let i = 0; i < w * h; i++) img.data[i * 4 + 3] = alpha[i];
+    ctx.putImageData(img, 0, 0);
+    return out;
+  }
+
+  function trim(src) {
+    const w = src.width, h = src.height;
+    const d = src.getContext("2d").getImageData(0, 0, w, h).data;
+    let minX = w, minY = h, maxX = 0, maxY = 0, n = 0;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (d[(y * w + x) * 4 + 3] < 12) continue;
+        n++;
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+      }
+    }
+    if (!n) return src;
+    minX = Math.max(0, minX - 2);
+    minY = Math.max(0, minY - 2);
+    maxX = Math.min(w - 1, maxX + 2);
+    maxY = Math.min(h - 1, maxY + 2);
+    const out = document.createElement("canvas");
+    out.width = maxX - minX + 1;
+    out.height = maxY - minY + 1;
+    out.getContext("2d").drawImage(src, minX, minY, out.width, out.height, 0, 0, out.width, out.height);
+    return out;
+  }
+
+  return { extract, loadNN, loadBg, trim };
 })();

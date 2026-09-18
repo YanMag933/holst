@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VER = "7";
+  const VER = "8";
   const SIZES = [
     [20, 30], [30, 40], [40, 50], [50, 70], [60, 80],
   ];
@@ -810,16 +810,18 @@
         <canvas class="draw" id="cut-draw"></canvas>
       </div>
       <div class="tools">
+        <span class="tiny" id="cut-phase-label">Выделить</span>
+        <button type="button" class="btn ghost row mark-pm" id="cut-minus" hidden>−</button>
+        <button type="button" class="btn ghost row mark-pm" id="cut-plus" hidden>+</button>
         <span class="tiny">толщина</span>
         <input id="brush" type="range" min="12" max="80" value="36" />
-        <button type="button" class="btn ghost row" id="cut-erase">ластик</button>
         <button type="button" class="btn ghost row" id="cut-clear">очистить</button>
       </div>
-      <label class="field">Прозрачность маркера
-        <input id="mark-op" type="range" min="15" max="85" value="50" />
+      <label class="field">Прозрачность кисти <span id="op-val">50%</span>
+        <input id="mark-op" type="range" min="12" max="80" value="50" />
       </label>
-      <p class="tiny" style="margin:0 0 10px">Закрась нужный предмет. Сеть снимет фон только на этом куске — как стикер.</p>
-      <label class="field">Как назвать предмет
+      <p class="tiny" id="cut-help" style="margin:0 0 10px">Закрась нужный предмет. Сеть снимет фон только на этом куске — как стикер.</p>
+      <label class="field" id="cut-name-wrap">Как назвать предмет
         <input id="cut-name" placeholder="яблоко, кувшин, дерево…" />
       </label>
       <div class="stack" style="margin-top:12px">
@@ -831,26 +833,40 @@
     const base = document.getElementById("cut-base");
     const draw = document.getElementById("cut-draw");
     const stage = document.getElementById("stage");
+    const msg = document.getElementById("cut-msg");
     cutImg = await loadImage(url);
     Cutout.loadBg().catch(() => {});
     Cutout.loadNN().catch(() => {});
-    let erase = false;
+    let phase = "select";
+    let refineMode = "minus";
     let drawing = false;
     let box = { x: 0, y: 0, w: 1, h: 1 };
     let markOp = 0.5;
+    let session = null;
+    let viewSrc = cutImg;
 
-    function fitCut() {
+    function dpr() { return Math.min(2, window.devicePixelRatio || 1); }
+    function applyMarkOp() {
+      const raw = Number(document.getElementById("mark-op").value);
+      markOp = Math.max(0.12, Math.min(0.8, raw / 100));
+      document.getElementById("op-val").textContent = Math.round(markOp * 100) + "%";
+      draw.style.opacity = String(markOp);
+    }
+    function fitTo(src) {
+      viewSrc = src;
+      const iw = src.naturalWidth || src.width;
+      const ih = src.naturalHeight || src.height;
       const sw = stage.clientWidth || 320;
       const sh = Math.min(window.innerHeight * 0.52, 560);
       stage.style.height = sh + "px";
-      const s = Math.min(sw / cutImg.naturalWidth, sh / cutImg.naturalHeight);
-      const dw = cutImg.naturalWidth * s;
-      const dh = cutImg.naturalHeight * s;
+      const s = Math.min(sw / iw, sh / ih);
+      const dw = iw * s;
+      const dh = ih * s;
       box = { x: (sw - dw) / 2, y: (sh - dh) / 2, w: dw, h: dh };
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const px = dpr();
       [base, draw].forEach((cv) => {
-        cv.width = Math.round(dw * dpr);
-        cv.height = Math.round(dh * dpr);
+        cv.width = Math.round(dw * px);
+        cv.height = Math.round(dh * px);
         cv.style.width = dw + "px";
         cv.style.height = dh + "px";
         cv.style.left = box.x + "px";
@@ -859,27 +875,54 @@
         cv.style.bottom = "auto";
       });
       const bctx = base.getContext("2d");
-      bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      bctx.drawImage(cutImg, 0, 0, dw, dh);
+      bctx.setTransform(px, 0, 0, px, 0, 0);
+      bctx.clearRect(0, 0, dw, dh);
+      bctx.drawImage(src, 0, 0, dw, dh);
       const dctx = draw.getContext("2d");
-      dctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      dctx.setTransform(px, 0, 0, px, 0, 0);
+      applyMarkOp();
     }
-    fitCut();
-
-    document.getElementById("cut-erase").onclick = () => {
-      erase = !erase;
-      document.getElementById("cut-erase").classList.toggle("on", erase);
-    };
-    document.getElementById("cut-clear").onclick = () => {
+    function clearDraw() {
       const ctx = draw.getContext("2d");
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, draw.width, draw.height);
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.setTransform(dpr(), 0, 0, dpr(), 0, 0);
+    }
+    function paintBase() {
+      const bctx = base.getContext("2d");
+      bctx.setTransform(dpr(), 0, 0, dpr(), 0, 0);
+      bctx.clearRect(0, 0, box.w, box.h);
+      bctx.drawImage(viewSrc, 0, 0, box.w, box.h);
+    }
+    fitTo(cutImg);
+
+    function setRefineBtns() {
+      document.getElementById("cut-minus").classList.toggle("on", refineMode === "minus");
+      document.getElementById("cut-plus").classList.toggle("on", refineMode === "plus");
+    }
+    document.getElementById("cut-minus").onclick = () => {
+      refineMode = "minus";
+      setRefineBtns();
     };
-    document.getElementById("mark-op").oninput = (e) => {
-      markOp = Number(e.target.value) / 100;
+    document.getElementById("cut-plus").onclick = () => {
+      refineMode = "plus";
+      setRefineBtns();
     };
+    document.getElementById("cut-clear").onclick = () => {
+      if (phase === "refine" && session) {
+        const copy = document.createElement("canvas");
+        copy.width = session.cut0.width;
+        copy.height = session.cut0.height;
+        copy.getContext("2d").drawImage(session.cut0, 0, 0);
+        session.cut = copy;
+        viewSrc = session.cut;
+        paintBase();
+      }
+      clearDraw();
+    };
+    document.getElementById("mark-op").addEventListener("input", applyMarkOp);
+    document.getElementById("mark-op").addEventListener("change", applyMarkOp);
+
     function pos(e) {
       const r = draw.getBoundingClientRect();
       const pt = e.touches ? e.touches[0] : e;
@@ -887,22 +930,49 @@
     }
     function paintAt(p0, p1) {
       const ctx = draw.getContext("2d");
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.setTransform(dpr(), 0, 0, dpr(), 0, 0);
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = "source-over";
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
       ctx.lineWidth = Number(document.getElementById("brush").value);
-      if (erase) {
-        ctx.globalCompositeOperation = "destination-out";
-        ctx.strokeStyle = "rgba(0,0,0," + markOp + ")";
+      if (phase === "refine") {
+        ctx.strokeStyle = refineMode === "plus" ? "#46c86e" : "#dc4646";
       } else {
-        ctx.globalCompositeOperation = "source-over";
-        ctx.strokeStyle = "rgba(255, 70, 160," + markOp + ")";
+        ctx.strokeStyle = "#ff46a0";
       }
       ctx.beginPath();
       ctx.moveTo(p0.x, p0.y);
       ctx.lineTo(p1.x, p1.y);
       ctx.stroke();
+    }
+    function bakeRefine() {
+      if (phase !== "refine" || !session) return;
+      const cut = session.cut;
+      const rgb = session.rgb;
+      const brush = document.createElement("canvas");
+      brush.width = cut.width;
+      brush.height = cut.height;
+      brush.getContext("2d").drawImage(draw, 0, 0, cut.width, cut.height);
+      const cctx = cut.getContext("2d");
+      if (refineMode === "minus") {
+        cctx.globalCompositeOperation = "destination-out";
+        cctx.drawImage(brush, 0, 0);
+        cctx.globalCompositeOperation = "source-over";
+      } else {
+        const piece = document.createElement("canvas");
+        piece.width = cut.width;
+        piece.height = cut.height;
+        const pctx = piece.getContext("2d");
+        pctx.drawImage(rgb, 0, 0);
+        pctx.globalCompositeOperation = "destination-in";
+        pctx.drawImage(brush, 0, 0);
+        cctx.globalCompositeOperation = "source-over";
+        cctx.drawImage(piece, 0, 0);
+      }
+      clearDraw();
+      viewSrc = cut;
+      paintBase();
     }
     let last = null;
     draw.onpointerdown = (e) => {
@@ -918,10 +988,74 @@
       paintAt(last, now);
       last = now;
     };
-    draw.onpointerup = () => { drawing = false; };
+    draw.onpointerup = () => {
+      drawing = false;
+      bakeRefine();
+    };
+    draw.onpointercancel = () => { drawing = false; };
+
+    function enterRefine(out) {
+      const rgb = document.createElement("canvas");
+      rgb.width = out.rgb.width;
+      rgb.height = out.rgb.height;
+      rgb.getContext("2d").drawImage(out.rgb, 0, 0);
+      const cut = document.createElement("canvas");
+      cut.width = out.cut.width;
+      cut.height = out.cut.height;
+      cut.getContext("2d").drawImage(out.cut, 0, 0);
+      const cut0 = document.createElement("canvas");
+      cut0.width = cut.width;
+      cut0.height = cut.height;
+      cut0.getContext("2d").drawImage(cut, 0, 0);
+      session = { rgb, cut, cut0 };
+      phase = "refine";
+      refineMode = "minus";
+      stage.classList.add("check");
+      document.getElementById("cut-phase-label").textContent = "Правка";
+      document.getElementById("cut-minus").hidden = false;
+      document.getElementById("cut-plus").hidden = false;
+      setRefineBtns();
+      document.getElementById("cut-help").textContent = "− убирает кусок с вырезки, + возвращает его из фото.";
+      document.getElementById("do-cut").hidden = true;
+      const preview = document.getElementById("cut-preview");
+      preview.hidden = false;
+      preview.innerHTML = `
+        <button type="button" class="btn" id="cut-keep">Готово</button>
+        <button type="button" class="btn ghost" id="cut-retry">Вырезать заново</button>
+      `;
+      fitTo(cut);
+      clearDraw();
+      msg.textContent = "Подправь край на самой вырезке, потом нажми «Готово».";
+      document.getElementById("cut-keep").onclick = async () => {
+        const trimmed = Cutout.trim(session.cut);
+        const blob = await new Promise((res) => trimmed.toBlob(res, "image/png"));
+        const id = uid("c");
+        await HolstDB.putFile("cut:" + id, blob);
+        const name = document.getElementById("cut-name").value.trim() || "предмет";
+        p.cutouts.push({ id, name });
+        save();
+        state.tab = "compose";
+        render();
+      };
+      document.getElementById("cut-retry").onclick = () => {
+        session = null;
+        phase = "select";
+        stage.classList.remove("check");
+        document.getElementById("cut-phase-label").textContent = "Выделить";
+        document.getElementById("cut-minus").hidden = true;
+        document.getElementById("cut-plus").hidden = true;
+        document.getElementById("cut-help").textContent = "Закрась нужный предмет. Сеть снимет фон только на этом куске — как стикер.";
+        document.getElementById("do-cut").hidden = false;
+        document.getElementById("do-cut").disabled = false;
+        preview.hidden = true;
+        preview.innerHTML = "";
+        fitTo(cutImg);
+        clearDraw();
+        msg.textContent = "Закрась предмет ещё раз.";
+      };
+    }
 
     document.getElementById("do-cut").onclick = async () => {
-      const msg = document.getElementById("cut-msg");
       const btn = document.getElementById("do-cut");
       if (btn.disabled) return;
       btn.disabled = true;
@@ -938,31 +1072,8 @@
         const out = await Cutout.extract(seen, tmp, {
           onProgress: (s) => { msg.textContent = s; },
         });
-        const preview = document.getElementById("cut-preview");
-        const url = URL.createObjectURL(out.blob);
-        msg.textContent = "Проверь: это тот предмет? Если нет — закрась его плотнее по центру и вырежи снова.";
-        preview.hidden = false;
-        preview.innerHTML = `
-          <div class="cut-preview check"><img src="${url}" alt="вырезанный предмет" /></div>
-          <button type="button" class="btn" id="cut-keep">Да, это он</button>
-          <button type="button" class="btn ghost" id="cut-retry">Вырезать заново</button>
-        `;
-        document.getElementById("cut-keep").onclick = async () => {
-          const id = uid("c");
-          await HolstDB.putFile("cut:" + id, out.blob);
-          const name = document.getElementById("cut-name").value.trim() || "предмет";
-          p.cutouts.push({ id, name });
-          save();
-          state.tab = "compose";
-          render();
-        };
-        document.getElementById("cut-retry").onclick = () => {
-          URL.revokeObjectURL(url);
-          preview.hidden = true;
-          preview.innerHTML = "";
-          btn.disabled = false;
-          msg.textContent = "Закрась нужный предмет ещё раз — сеть смотрит только внутрь мазка.";
-        };
+        if (!out.rgb || !out.cut) throw new Error("Не вышло собрать вырезку.");
+        enterRefine(out);
       } catch (err) {
         btn.disabled = false;
         msg.textContent = err.message || "Не вышло. Закрась предмет пятном и попробуй ещё раз.";
