@@ -14,6 +14,8 @@ window.Easel = (function () {
     this.mode = "idle";
     this.pointers = new Map();
     this.lastPinch = null;
+    this.holdTimer = 0;
+    this.pendingHoldMenu = false;
     this.dpr = Math.min(2, window.devicePixelRatio || 1);
     this._bind();
     this.resize();
@@ -106,16 +108,27 @@ window.Easel = (function () {
   Easel.prototype._bind = function () {
     const el = this.canvas;
     el.style.touchAction = "none";
-    el.addEventListener("pointerdown", this.onDown.bind(this));
+    el.addEventListener("pointerdown", this.onDown.bind(this), { passive: false });
     el.addEventListener("pointermove", this.onMove.bind(this));
     el.addEventListener("pointerup", this.onUp.bind(this));
     el.addEventListener("pointercancel", this.onUp.bind(this));
+    el.addEventListener("contextmenu", (e) => e.preventDefault());
+  };
+
+  Easel.prototype.clearHold = function () {
+    if (this.holdTimer) {
+      clearTimeout(this.holdTimer);
+      this.holdTimer = 0;
+    }
   };
 
   Easel.prototype.onDown = function (e) {
+    e.preventDefault();
     elCapture(this.canvas, e);
     const p = this.eventPos(e);
     this.pointers.set(e.pointerId, p);
+    this.clearHold();
+    this.pendingHoldMenu = false;
     if (this.pointers.size === 2) {
       this.lastPinch = this.pinchState();
       this.mode = "pinch";
@@ -140,6 +153,20 @@ window.Easel = (function () {
     };
     if (this.opts.onSelect) this.opts.onSelect(hit.sticker.id);
     this.draw();
+    if (hit.handle === "body") {
+      this.holdTimer = setTimeout(() => {
+        this.holdTimer = 0;
+        if (this.mode !== "body" || this.pointers.size !== 1) return;
+        const s = this.stickers.find((x) => x.id === this.selectedId);
+        if (!s || !this.dragStart) return;
+        s.x = this.dragStart.x;
+        s.y = this.dragStart.y;
+        this.mode = "hold";
+        this.pendingHoldMenu = true;
+        this.draw();
+        try { if (navigator.vibrate) navigator.vibrate(16); } catch (err) {}
+      }, 480);
+    }
   };
 
   function elCapture(el, e) {
@@ -177,6 +204,11 @@ window.Easel = (function () {
       }
       return;
     }
+    if (this.mode === "hold") return;
+    if (this.dragStart && this.holdTimer) {
+      const moved = Math.hypot(p.x - this.dragStart.p.x, p.y - this.dragStart.p.y);
+      if (moved > 10) this.clearHold();
+    }
     if (!s || !this.dragStart) return;
     if (this.mode === "body") {
       s.x = this.dragStart.x + (p.x - this.dragStart.p.x) / w;
@@ -198,11 +230,18 @@ window.Easel = (function () {
   };
 
   Easel.prototype.onUp = function (e) {
+    this.clearHold();
+    const openMenu = this.pendingHoldMenu && this.mode === "hold";
+    this.pendingHoldMenu = false;
     this.pointers.delete(e.pointerId);
     if (this.pointers.size < 2) this.mode = this.pointers.size ? this.mode : "idle";
     if (!this.pointers.size) {
       this.dragStart = null;
       this.lastPinch = null;
+    }
+    if (openMenu && this.opts.onLongPress) {
+      const s = this.stickers.find((x) => x.id === this.selectedId);
+      if (s) this.opts.onLongPress(s);
     }
   };
 
@@ -222,6 +261,17 @@ window.Easel = (function () {
     }
     if (kind === "back") {
       this.stickers = [s].concat(this.stickers.filter((x) => x.id !== s.id));
+    }
+    if (kind === "forward" || kind === "backward") {
+      const i = this.stickers.findIndex((x) => x.id === s.id);
+      const j = kind === "forward" ? i + 1 : i - 1;
+      if (i >= 0 && j >= 0 && j < this.stickers.length) {
+        const next = this.stickers.slice();
+        const tmp = next[i];
+        next[i] = next[j];
+        next[j] = tmp;
+        this.stickers = next;
+      }
     }
     this.draw();
     this._changed();

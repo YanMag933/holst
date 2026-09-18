@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VER = "8";
+  const VER = "9";
   const SIZES = [
     [20, 30], [30, 40], [40, 50], [50, 70], [60, 80],
   ];
@@ -630,7 +630,7 @@
         <button type="button" class="btn ghost row" data-nudge="front">вперёд</button>
       </div>
       <button type="button" class="btn danger" id="del-sticker" style="margin-top:10px">Удалить объект с холста</button>
-      <p class="tiny" id="del-hint" style="margin:8px 0 10px">Нажми предмет на холсте, потом эту кнопку. Размер меняется равномерно, без растягивания.</p>
+      <p class="tiny" id="del-hint" style="margin:8px 0 10px">Зажми предмет — слой вперёд или назад. Нажми, потом «Удалить». Размер меняется равномерно.</p>
       <label class="field">Сетка
         <select id="grid-n">
           ${[3, 4, 5, 6, 8].map((n) => `<option value="${n}" ${p.gridN === n ? "selected" : ""}>${n}×${n}</option>`).join("")}
@@ -770,6 +770,46 @@
     }
   }
 
+  function closeModal() {
+    modal.hidden = true;
+    modal.innerHTML = "";
+    modal.onclick = null;
+  }
+
+  function showDepthSheet(sticker) {
+    if (!easel || !sticker) return;
+    easel.selectedId = sticker.id;
+    easel.draw();
+    modal.hidden = false;
+    modal.innerHTML = `
+      <div class="sheet" role="dialog" aria-label="Глубина">
+        <div class="grab"></div>
+        <h3>Глубина</h3>
+        <p class="tiny">Вперёд — ближе к зрителю. Назад — дальше в картину. Можно нажать несколько раз.</p>
+        <div class="stack">
+          <button type="button" class="btn" id="depth-forward">Переместить вперёд</button>
+          <button type="button" class="btn secondary" id="depth-backward">Переместить назад</button>
+          <button type="button" class="btn ghost" id="depth-done">Готово</button>
+        </div>
+      </div>
+    `;
+    modal.onclick = (e) => {
+      if (e.target === modal) closeModal();
+    };
+    document.getElementById("depth-forward").onclick = (e) => {
+      e.stopPropagation();
+      if (easel) easel.nudge("forward");
+    };
+    document.getElementById("depth-backward").onclick = (e) => {
+      e.stopPropagation();
+      if (easel) easel.nudge("backward");
+    };
+    document.getElementById("depth-done").onclick = (e) => {
+      e.stopPropagation();
+      closeModal();
+    };
+  }
+
   async function mountEasel(p) {
     const canvas = document.getElementById("easel");
     if (!canvas) return;
@@ -780,6 +820,9 @@
         save();
       },
       onSelect() {},
+      onLongPress(sticker) {
+        showDepthSheet(sticker);
+      },
     });
     easel.setScene({
       stickers: p.stickers,
