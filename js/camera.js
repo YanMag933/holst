@@ -51,10 +51,11 @@ window.StudioCam = (function () {
     if (video) video.srcObject = null;
   }
 
-  function fitFrame(parent, aspect) {
+  function fitFrame(parent, aspect, inset) {
     const w = parent.clientWidth;
-    const h = parent.clientHeight;
-    const pad = 18;
+    const extraB = (inset && inset.bottom) || 0;
+    const h = parent.clientHeight - extraB;
+    const pad = 14;
     let fw = w - pad * 2;
     let fh = fw / aspect;
     if (fh > h - pad * 2) {
@@ -94,9 +95,10 @@ window.StudioCam = (function () {
     ctx.drawImage(src, sx, sy, sw, sh, 0, 0, W, H);
     ctx.globalAlpha = 1;
 
-    ctx.strokeStyle = "rgba(244,236,225,0.55)";
-    ctx.lineWidth = Math.max(1, W / 400);
     const gn = zoomCell ? 2 : n;
+    ctx.save();
+    ctx.strokeStyle = "rgba(255,255,255,0.11)";
+    ctx.lineWidth = Math.max(0.5, W / 900);
     for (let i = 1; i < gn; i++) {
       ctx.beginPath();
       ctx.moveTo((W * i) / gn, 0);
@@ -109,19 +111,29 @@ window.StudioCam = (function () {
     }
 
     if (!zoomCell && highlightCells && highlightCells.length) {
-      ctx.fillStyle = "rgba(212,85,43,0.18)";
-      ctx.strokeStyle = "rgba(212,85,43,0.9)";
+      ctx.fillStyle = "rgba(212,181,106,0.07)";
       highlightCells.forEach((c) => {
-        const x = (c.col / n) * W;
-        const y = (c.row / n) * H;
-        ctx.fillRect(x, y, W / n, H / n);
-        ctx.strokeRect(x + 1, y + 1, W / n - 2, H / n - 2);
+        ctx.fillRect((c.col / n) * W, (c.row / n) * H, W / n, H / n);
       });
     }
 
-    ctx.strokeStyle = "#f4ece1";
-    ctx.lineWidth = Math.max(2, W / 180);
+    if (!zoomCell) {
+      ctx.font = Math.max(8, Math.round(W / 48)) + "px Palatino, serif";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+      for (let r = 0; r < n; r++) {
+        for (let c = 0; c < n; c++) {
+          const hot = highlightCells && highlightCells.some((x) => x.col === c && x.row === r);
+          ctx.fillStyle = hot ? "rgba(232,204,126,0.38)" : "rgba(255,255,255,0.16)";
+          ctx.fillText(StudioAnalyze.cellLabel(c, r, n), (c / n) * W + 3, (r / n) * H + 3);
+        }
+      }
+    }
+
+    ctx.strokeStyle = "rgba(244,236,225,0.55)";
+    ctx.lineWidth = Math.max(1.2, W / 280);
     ctx.strokeRect(1, 1, W - 2, H - 2);
+    ctx.restore();
   }
 
   return { start, stop, fitFrame, drawOverlay, pxPerMm, mmToPx };

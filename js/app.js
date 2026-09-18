@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VER = "4";
+  const VER = "5";
   const SIZES = [
     [20, 30], [30, 40], [40, 50], [50, 70], [60, 80],
   ];
@@ -39,7 +39,7 @@
       tab: "home",
       activeId: null,
       calibrate: null,
-      overlayOpacity: 0.42,
+      overlayOpacity: 0.28,
       projects: [],
       ui: {},
     };
@@ -705,19 +705,20 @@
   async function renderCutout(p) {
     const ref = p.refs.find((r) => r.id === state.ui.refId);
     if (!ref) { state.tab = "compose"; return renderCompose(p); }
-    renderTop("Маркер", "закрась предмет, не фон", true);
+    renderTop("Маркер", "пятно по предмету — сеть доведёт край", true);
     const url = await fileUrl("ref:" + ref.id);
     app.innerHTML = `
       <div class="cutout-stage" id="stage">
-        <img class="base" id="cut-img" src="${esc(url)}" alt="" />
+        <canvas class="base" id="cut-base"></canvas>
         <canvas class="draw" id="cut-draw"></canvas>
       </div>
       <div class="tools">
         <span class="tiny">толщина</span>
-        <input id="brush" type="range" min="8" max="64" value="28" />
+        <input id="brush" type="range" min="12" max="80" value="36" />
         <button type="button" class="btn ghost row" id="cut-erase">ластик</button>
         <button type="button" class="btn ghost row" id="cut-clear">очистить</button>
       </div>
+      <p class="tiny" style="margin:0 0 10px">Закрась предмет небрежно полупрозрачным маркером. Нейросеть снимет фон и обрежет по его контуру.</p>
       <label class="field">Как назвать предмет
         <input id="cut-name" placeholder="яблоко, кувшин, дерево…" />
       </label>
@@ -726,45 +727,57 @@
         <p class="tiny" id="cut-msg"></p>
       </div>
     `;
-    const img = document.getElementById("cut-img");
+    const base = document.getElementById("cut-base");
     const draw = document.getElementById("cut-draw");
     const stage = document.getElementById("stage");
     cutImg = await loadImage(url);
-    img.onload = fitCut;
-    if (img.complete) fitCut();
+    Cutout.loadNN().catch(() => {});
     let erase = false;
     let drawing = false;
+    let box = { x: 0, y: 0, w: 1, h: 1 };
+
+    function fitCut() {
+      const sw = stage.clientWidth || 320;
+      const sh = Math.min(window.innerHeight * 0.52, 560);
+      stage.style.height = sh + "px";
+      const s = Math.min(sw / cutImg.naturalWidth, sh / cutImg.naturalHeight);
+      const dw = cutImg.naturalWidth * s;
+      const dh = cutImg.naturalHeight * s;
+      box = { x: (sw - dw) / 2, y: (sh - dh) / 2, w: dw, h: dh };
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      [base, draw].forEach((cv) => {
+        cv.width = Math.round(dw * dpr);
+        cv.height = Math.round(dh * dpr);
+        cv.style.width = dw + "px";
+        cv.style.height = dh + "px";
+        cv.style.left = box.x + "px";
+        cv.style.top = box.y + "px";
+        cv.style.right = "auto";
+        cv.style.bottom = "auto";
+      });
+      const bctx = base.getContext("2d");
+      bctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      bctx.drawImage(cutImg, 0, 0, dw, dh);
+      const dctx = draw.getContext("2d");
+      dctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    fitCut();
+
     document.getElementById("cut-erase").onclick = () => {
       erase = !erase;
       document.getElementById("cut-erase").classList.toggle("on", erase);
     };
     document.getElementById("cut-clear").onclick = () => {
       const ctx = draw.getContext("2d");
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.clearRect(0, 0, draw.width, draw.height);
-    };
-    function fitCut() {
-      const w = stage.clientWidth || 320;
-      const h = Math.min(window.innerHeight * 0.52, 520);
-      stage.style.height = h + "px";
       const dpr = Math.min(2, window.devicePixelRatio || 1);
-      draw.width = Math.round(w * dpr);
-      draw.height = Math.round(h * dpr);
-      draw.style.width = w + "px";
-      draw.style.height = h + "px";
-      const ctx = draw.getContext("2d");
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    }
+    };
     function pos(e) {
       const r = draw.getBoundingClientRect();
       const pt = e.touches ? e.touches[0] : e;
       return { x: pt.clientX - r.left, y: pt.clientY - r.top };
-    }
-    function containBox() {
-      const r = draw.getBoundingClientRect();
-      const iw = cutImg.naturalWidth, ih = cutImg.naturalHeight;
-      const s = Math.min(r.width / iw, r.height / ih);
-      const dw = iw * s, dh = ih * s;
-      return { x: (r.width - dw) / 2, y: (r.height - dh) / 2, w: dw, h: dh, s };
     }
     function paintAt(p0, p1) {
       const ctx = draw.getContext("2d");
@@ -775,10 +788,10 @@
       ctx.lineWidth = Number(document.getElementById("brush").value);
       if (erase) {
         ctx.globalCompositeOperation = "destination-out";
-        ctx.strokeStyle = "rgba(0,0,0,1)";
+        ctx.strokeStyle = "rgba(0,0,0,0.55)";
       } else {
         ctx.globalCompositeOperation = "source-over";
-        ctx.strokeStyle = "rgba(255, 70, 160, 0.72)";
+        ctx.strokeStyle = "rgba(255, 70, 160, 0.5)";
       }
       ctx.beginPath();
       ctx.moveTo(p0.x, p0.y);
@@ -787,6 +800,7 @@
     }
     let last = null;
     draw.onpointerdown = (e) => {
+      e.preventDefault();
       draw.setPointerCapture(e.pointerId);
       drawing = true;
       last = pos(e);
@@ -802,31 +816,26 @@
 
     document.getElementById("do-cut").onclick = async () => {
       const msg = document.getElementById("cut-msg");
-      msg.textContent = "Вырезаю…";
+      const btn = document.getElementById("do-cut");
+      if (btn.disabled) return;
+      btn.disabled = true;
+      msg.textContent = "Загружаю нейросеть и ищу контур…";
       try {
-        const box = containBox();
         const tmp = document.createElement("canvas");
         tmp.width = cutImg.naturalWidth;
         tmp.height = cutImg.naturalHeight;
-        const tctx = tmp.getContext("2d");
-        const cssW = draw.getBoundingClientRect().width;
-        const cssH = draw.getBoundingClientRect().height;
-        const src = document.createElement("canvas");
-        src.width = draw.width;
-        src.height = draw.height;
-        src.getContext("2d").drawImage(draw, 0, 0);
-        tctx.drawImage(src, box.x * (src.width / cssW), box.y * (src.height / cssH), box.w * (src.width / cssW), box.h * (src.height / cssH), 0, 0, tmp.width, tmp.height);
+        tmp.getContext("2d").drawImage(draw, 0, 0, tmp.width, tmp.height);
         const out = await Cutout.extract(cutImg, tmp);
         const id = uid("c");
         await HolstDB.putFile("cut:" + id, out.blob);
         const name = document.getElementById("cut-name").value.trim() || "предмет";
         p.cutouts.push({ id, name });
         save();
-        msg.textContent = "Готово. Положи предмет на холст.";
         state.tab = "compose";
         render();
       } catch (err) {
-        msg.textContent = err.message || "Не вышло. Закрась предмет плотнее.";
+        btn.disabled = false;
+        msg.textContent = err.message || "Не вышло. Закрась предмет пятном и попробуй ещё раз.";
       }
     };
   }
@@ -946,17 +955,15 @@
         <video id="cam-video" playsinline muted autoplay></video>
         <div class="cam-frame" id="cam-frame"><canvas id="cam-ov"></canvas></div>
         <div class="cam-top">
-          <span class="tiny" style="background:rgba(0,0,0,.45);padding:4px 8px;border-radius:8px" id="cam-label"></span>
+          <span class="tiny" style="background:rgba(0,0,0,.4);padding:4px 8px;border-radius:8px" id="cam-label"></span>
         </div>
-        <div class="cam-ui">
-          <label class="field">Прозрачность проекции
-            <input id="op" type="range" min="10" max="80" value="${Math.round((state.overlayOpacity || 0.42) * 100)}" />
+        <div class="cam-ui compact">
+          <label class="field">Прозрачность картины
+            <input id="op" type="range" min="8" max="70" value="${Math.round((state.overlayOpacity || 0.28) * 100)}" />
           </label>
           <label class="field">Этап
             <select id="cam-step"></select>
           </label>
-          <div class="tiny" id="cam-cells" style="margin:6px 0"></div>
-          <div class="cell-grid" id="cam-grid"></div>
           <p class="tiny" id="zoom-hint"></p>
           <div id="cam-mix"></div>
           <p class="tiny" id="cam-err" style="color:var(--bad)"></p>
@@ -978,13 +985,16 @@
     if (!exportShot) {
       try { p.analysis = await runAnalysis(p); } catch (e) {}
     }
+    if (state.overlayOpacity == null || state.overlayOpacity === 0.42) state.overlayOpacity = 0.28;
     const aspect = p.widthCm / p.heightCm;
     const steps = p.analysis.steps || [];
     const sel = document.getElementById("cam-step");
     sel.innerHTML = steps.map((s, i) => `<option value="${i}" ${i === (p.stepIndex || 0) ? "selected" : ""}>${esc(s.title)}</option>`).join("");
     function layout() {
       const root = document.getElementById("cam-root");
-      const fit = StudioCam.fitFrame(root, aspect);
+      const hud = document.querySelector(".cam-ui");
+      const extra = hud ? Math.min(160, hud.getBoundingClientRect().height) : 120;
+      const fit = StudioCam.fitFrame(root, aspect, { bottom: extra });
       frame.style.left = fit.left + "px";
       frame.style.top = fit.top + "px";
       frame.style.width = fit.fw + "px";
@@ -1000,50 +1010,43 @@
         ? `Клетка ${StudioAnalyze.cellLabel(p.zoomCell.col, p.zoomCell.row, p.gridN)} · ближе к холсту`
         : `${p.widthCm}×${p.heightCm} см · совмести рамку с холстом`;
       document.getElementById("zoom-hint").textContent = p.zoomCell
-        ? "Рамка теперь = один квадрат. Подвинь телефон ближе, чтобы этот кусок реального холста совпал с рамкой."
-        : "Поставь телефон так, чтобы реальный холст совпал с светлой рамкой. Сетка показывает, где что писать.";
-      const n = p.gridN;
-      const grid = document.getElementById("cam-grid");
-      grid.style.gridTemplateColumns = `repeat(${n}, 1fr)`;
+        ? "Рамка = один квадрат. Коснись картины ещё раз, чтобы снова видеть весь холст."
+        : "Полупрозрачная картина лежит на реальном холсте. Сетка почти не мешает. Коснись клетки, чтобы приблизить.";
       const hi = (step && step.cells) || [];
-      grid.innerHTML = "";
-      for (let r = 0; r < n; r++) {
-        for (let c = 0; c < n; c++) {
-          const lab = StudioAnalyze.cellLabel(c, r, n);
-          const on = p.zoomCell && p.zoomCell.col === c && p.zoomCell.row === r;
-          const mark = hi.some((x) => x.col === c && x.row === r);
-          const b = document.createElement("button");
-          b.textContent = lab;
-          b.className = on ? "on" : "";
-          b.style.outline = mark ? "1px solid #d4552b" : "";
-          b.onclick = () => {
-            p.zoomCell = on ? null : { col: c, row: r };
-            save();
-            paintCam();
-          };
-          grid.appendChild(b);
-        }
-      }
       const ppm = StudioCam.pxPerMm(state.calibrate);
       const mix = document.getElementById("cam-mix");
       const sh = (step && step.shades && step.shades[0]) || null;
       mix.innerHTML = sh ? `
         <div class="row">
           <span class="swatch" style="background:${esc(sh.mix.hex)}"></span>
-          <span class="tiny">${esc(sh.label)} · ${esc((sh.mix.parts || []).map((x) => x.name).join(" + "))}</span>
+          <span class="tiny">${esc(sh.label)}</span>
+          <span class="stroke-preview" style="--stroke:${Math.min(48, (sh.strokeMm || 10) * ppm)}px;background:${esc(sh.mix.hex)};margin:0 0 0 auto"></span>
         </div>
-        <div class="stroke-preview" style="--stroke:${(sh.strokeMm || 10) * ppm}px;background:${esc(sh.mix.hex)}"></div>
-        <p class="tiny" style="text-align:center">Мазок на палитре должен совпасть с кружком</p>
       ` : "";
       StudioCam.drawOverlay({
         canvas: ov,
         exportCanvas: exportShot,
-        opacity: state.overlayOpacity,
+        opacity: state.overlayOpacity || 0.28,
         gridN: p.gridN,
         zoomCell: p.zoomCell,
         highlightCells: p.zoomCell ? [] : hi,
       });
     }
+    ov.onclick = (e) => {
+      if (p.zoomCell) {
+        p.zoomCell = null;
+        save();
+        paintCam();
+        return;
+      }
+      const r = ov.getBoundingClientRect();
+      const n = p.gridN || 4;
+      const col = Math.min(n - 1, Math.max(0, Math.floor(((e.clientX - r.left) / r.width) * n)));
+      const row = Math.min(n - 1, Math.max(0, Math.floor(((e.clientY - r.top) / r.height) * n)));
+      p.zoomCell = { col, row };
+      save();
+      paintCam();
+    };
     sel.onchange = () => {
       p.stepIndex = Number(sel.value);
       p.zoomCell = null;

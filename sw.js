@@ -1,4 +1,4 @@
-const VER = "4";
+const VER = "5";
 
 self.addEventListener("install", (e) => {
   const urls = [
@@ -18,6 +18,7 @@ self.addEventListener("install", (e) => {
     "./js/analyze.js?v=" + VER,
     "./js/camera.js?v=" + VER,
     "./js/app.js?v=" + VER,
+    "./models/magic_touch.tflite",
   ];
   e.waitUntil(
     caches.open("holst-" + VER).then((cache) =>
