@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VER = "12";
+  const VER = "13";
   const SIZES = [
     [20, 30], [30, 40], [40, 50], [50, 50], [50, 70], [60, 80],
   ];
@@ -1749,14 +1749,21 @@
         <button type="button" class="cam-scrim" id="cam-scrim" hidden aria-label="Закрыть подсказку"></button>
         <div class="cam-sheet-wrap" id="cam-sheet">
           <div class="cam-sheet">
-            <button type="button" class="cam-sheet-handle" id="cam-sheet-toggle" aria-expanded="false">
-              <span class="grab"></span>
-              <span class="cam-sheet-head">
-                <span class="swatch" id="cam-handle-swatch" hidden></span>
-                <span class="cam-sheet-title" id="cam-sheet-title">Подсказка</span>
-                <span class="cam-sheet-chevron" aria-hidden="true">▴</span>
-              </span>
-            </button>
+            <div class="cam-sheet-handle">
+              <button type="button" class="cam-sheet-toggle" id="cam-sheet-toggle" aria-expanded="false">
+                <span class="grab"></span>
+                <span class="cam-sheet-head">
+                  <span class="swatch" id="cam-handle-swatch" hidden></span>
+                  <span class="cam-sheet-title" id="cam-sheet-title">Подсказка</span>
+                  <span class="cam-sheet-chevron" aria-hidden="true">▴</span>
+                </span>
+              </button>
+              <div class="cam-step-nav">
+                <button type="button" class="btn ghost row" id="cam-prev">Назад</button>
+                <span class="tiny" id="cam-step-count"></span>
+                <button type="button" class="btn gold row" id="cam-next">Дальше</button>
+              </div>
+            </div>
             <div class="cam-sheet-body">
               <label class="field">Прозрачность картины
                 <input id="op" type="range" min="8" max="70" value="${Math.round((state.overlayOpacity || 0.28) * 100)}" />
@@ -1796,14 +1803,30 @@
     const sheet = document.getElementById("cam-sheet");
     const scrim = document.getElementById("cam-scrim");
     const toggle = document.getElementById("cam-sheet-toggle");
+    const prevBtn = document.getElementById("cam-prev");
+    const nextBtn = document.getElementById("cam-next");
+    const stepCount = document.getElementById("cam-step-count");
     sel.innerHTML = steps.map((s, i) => `<option value="${i}" ${i === (p.stepIndex || 0) ? "selected" : ""}>${esc(s.title)}</option>`).join("");
     function setSheet(open) {
       sheet.classList.toggle("open", open);
       toggle.setAttribute("aria-expanded", open ? "true" : "false");
       scrim.hidden = !open;
     }
+    function goStep(delta) {
+      if (!steps.length) return;
+      const cur = Math.max(0, Math.min(steps.length - 1, p.stepIndex || 0));
+      const next = Math.max(0, Math.min(steps.length - 1, cur + delta));
+      if (next === cur) return;
+      p.stepIndex = next;
+      sel.value = String(next);
+      setProjectZoom(p, { kind: "full", col: 0, row: 0 });
+      save();
+      paintCam();
+    }
     toggle.onclick = () => setSheet(!sheet.classList.contains("open"));
     scrim.onclick = () => setSheet(false);
+    if (prevBtn) prevBtn.onclick = () => goStep(-1);
+    if (nextBtn) nextBtn.onclick = () => goStep(1);
     function layout() {
       const root = document.getElementById("cam-root");
       const nav = document.getElementById("nav");
@@ -1853,6 +1876,13 @@
           handleSw.hidden = true;
         }
       }
+      const idx = p.stepIndex || 0;
+      if (stepCount) stepCount.textContent = steps.length ? (idx + 1) + " / " + steps.length : "";
+      if (prevBtn) prevBtn.disabled = idx <= 0;
+      if (nextBtn) {
+        nextBtn.disabled = idx >= steps.length - 1;
+        nextBtn.textContent = idx >= steps.length - 1 ? "Готово" : "Дальше";
+      }
       mix.innerHTML = step ? `
         <div class="tiny" style="color:var(--linen);margin:0 0 4px">${esc(step.title)}</div>
         ${step.teacher ? `<p class="tiny">${esc(step.teacher)}</p>` : ""}
@@ -1876,6 +1906,11 @@
           x.classList.toggle("on", x.dataset.zoom === z.kind);
         });
       }
+      const idx = Math.max(0, Math.min(steps.length - 1, p.stepIndex || 0));
+      if (stepCount) stepCount.textContent = steps.length ? (idx + 1) + " из " + steps.length : "";
+      if (prevBtn) prevBtn.disabled = idx <= 0;
+      if (nextBtn) nextBtn.disabled = idx >= steps.length - 1;
+      if (sel && String(sel.value) !== String(idx)) sel.value = String(idx);
     }
     ov.onclick = (e) => {
       const r = ov.getBoundingClientRect();

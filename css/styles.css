@@ -478,13 +478,16 @@ img { max-width: 100%; display: block; }
   box-shadow: 0 -18px 40px rgba(0,0,0,0.35);
 }
 .cam-sheet-handle {
-  display: block;
-  width: 100%;
   padding: 8px 14px 10px;
-  text-align: left;
   color: var(--linen);
 }
-.cam-sheet-handle .grab {
+.cam-sheet-toggle {
+  display: block;
+  width: 100%;
+  text-align: left;
+  color: inherit;
+}
+.cam-sheet-toggle .grab {
   margin: 0 auto 8px;
   background: rgba(224,196,122,0.45);
 }
@@ -510,6 +513,24 @@ img { max-width: 100%; display: block; }
   transition: transform .22s ease;
 }
 .cam-sheet-wrap.open .cam-sheet-chevron { transform: rotate(180deg); }
+.cam-step-nav {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+.cam-step-nav .btn {
+  min-height: 42px;
+  padding: 0 12px;
+  width: 100%;
+}
+.cam-step-nav .tiny {
+  text-align: center;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--gold);
+}
 .cam-sheet-body {
   max-height: 0;
   overflow: hidden;
