@@ -100,7 +100,25 @@ window.StudioCam = (function () {
     const kind = view.kind || "full";
     const gn = kind === "full" ? n : 2;
     ctx.save();
-    ctx.strokeStyle = "rgba(255,255,255,0.11)";
+    const hotList = highlightCells || [];
+    const hotSet = new Set(hotList.map((c) => c.col + ":" + c.row));
+    const subset = hotList.length > 0 && hotList.length < n * n;
+
+    function cellBox(col, row) {
+      const left = (col / n - rect.x) / rect.w;
+      const top = (row / n - rect.y) / rect.h;
+      const right = ((col + 1) / n - rect.x) / rect.w;
+      const bottom = ((row + 1) / n - rect.y) / rect.h;
+      return {
+        x: left * W,
+        y: top * H,
+        w: (right - left) * W,
+        h: (bottom - top) * H,
+        visible: right > 0.001 && bottom > 0.001 && left < 0.999 && top < 0.999,
+      };
+    }
+
+    ctx.strokeStyle = subset ? "rgba(255,255,255,0.08)" : "rgba(224,196,122,0.28)";
     ctx.lineWidth = Math.max(0.5, W / 900);
     for (let i = 1; i < gn; i++) {
       ctx.beginPath();
@@ -113,15 +131,40 @@ window.StudioCam = (function () {
       ctx.stroke();
     }
 
-    if (kind === "full" && highlightCells && highlightCells.length) {
-      ctx.fillStyle = "rgba(212,181,106,0.07)";
-      highlightCells.forEach((c) => {
-        ctx.fillRect((c.col / n) * W, (c.row / n) * H, W / n, H / n);
+    if (subset) {
+      ctx.fillStyle = "rgba(4,2,0,0.52)";
+      for (let row = 0; row < n; row++) {
+        for (let col = 0; col < n; col++) {
+          if (hotSet.has(col + ":" + row)) continue;
+          const box = cellBox(col, row);
+          if (box.visible) ctx.fillRect(box.x, box.y, box.w, box.h);
+        }
+      }
+      const lw = Math.max(2.2, W / 130);
+      hotList.forEach((c) => {
+        const box = cellBox(c.col, c.row);
+        if (!box.visible) return;
+        ctx.fillStyle = "rgba(224,196,122,0.18)";
+        ctx.fillRect(box.x, box.y, box.w, box.h);
+        ctx.strokeStyle = "rgba(232,204,126,0.95)";
+        ctx.lineWidth = lw;
+        ctx.strokeRect(box.x + lw / 2, box.y + lw / 2, box.w - lw, box.h - lw);
       });
+    } else if (hotList.length) {
+      const lw = Math.max(1.5, W / 200);
+      ctx.strokeStyle = "rgba(232,204,126,0.5)";
+      ctx.lineWidth = lw;
+      for (let row = 0; row < n; row++) {
+        for (let col = 0; col < n; col++) {
+          const box = cellBox(col, row);
+          if (!box.visible) continue;
+          ctx.strokeRect(box.x + lw / 2, box.y + lw / 2, box.w - lw, box.h - lw);
+        }
+      }
     }
 
     if (kind !== "cell") {
-      ctx.font = Math.max(10, Math.round(W / (kind === "quad" ? 18 : 48))) + "px Palatino, serif";
+      ctx.font = Math.max(11, Math.round(W / (kind === "quad" ? 16 : 42))) + "px Palatino, serif";
       ctx.textAlign = "left";
       ctx.textBaseline = "top";
       const c0 = Math.round(rect.x * n);
@@ -131,13 +174,17 @@ window.StudioCam = (function () {
         for (let c = 0; c < span; c++) {
           const col = c0 + c;
           const row = r0 + r;
-          const hot = highlightCells && highlightCells.some((x) => x.col === col && x.row === row);
-          ctx.fillStyle = hot ? "rgba(232,204,126,0.45)" : "rgba(255,255,255,0.2)";
-          ctx.fillText(
-            StudioAnalyze.cellLabel(col, row, n),
-            (c / span) * W + 6,
-            (r / span) * H + 6
-          );
+          const hot = hotSet.has(col + ":" + row);
+          const label = StudioAnalyze.cellLabel(col, row, n);
+          const x = (c / span) * W + 7;
+          const y = (r / span) * H + 7;
+          if (hot && subset) {
+            ctx.fillStyle = "rgba(18,12,6,0.62)";
+            const tw = ctx.measureText(label).width;
+            ctx.fillRect(x - 4, y - 3, tw + 10, Math.max(16, W / 36));
+          }
+          ctx.fillStyle = hot ? "rgba(255,232,170,0.95)" : "rgba(255,255,255,0.28)";
+          ctx.fillText(label, x, y);
         }
       }
     }

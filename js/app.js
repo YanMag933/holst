@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VER = "11";
+  const VER = "12";
   const SIZES = [
     [20, 30], [30, 40], [40, 50], [50, 50], [50, 70], [60, 80],
   ];
@@ -1744,20 +1744,33 @@
         <video id="cam-video" playsinline muted autoplay></video>
         <div class="cam-frame" id="cam-frame"><canvas id="cam-ov"></canvas></div>
         <div class="cam-top">
-          <span class="tiny" style="background:rgba(0,0,0,.4);padding:4px 8px;border-radius:8px" id="cam-label"></span>
+          <span class="tiny cam-chip" id="cam-label"></span>
         </div>
-        <div class="cam-ui compact">
-          <label class="field">Прозрачность картины
-            <input id="op" type="range" min="8" max="70" value="${Math.round((state.overlayOpacity || 0.28) * 100)}" />
-          </label>
-          <label class="field">Этап
-            <select id="cam-step"></select>
-          </label>
-          ${zoomBarHtml(p)}
-          <p class="tiny" id="zoom-hint"></p>
-          <button type="button" class="btn ghost" id="cast-screen">Другой экран</button>
-          <div id="cam-mix"></div>
-          <p class="tiny" id="cam-err" style="color:var(--bad)"></p>
+        <button type="button" class="cam-scrim" id="cam-scrim" hidden aria-label="Закрыть подсказку"></button>
+        <div class="cam-sheet-wrap" id="cam-sheet">
+          <div class="cam-sheet">
+            <button type="button" class="cam-sheet-handle" id="cam-sheet-toggle" aria-expanded="false">
+              <span class="grab"></span>
+              <span class="cam-sheet-head">
+                <span class="swatch" id="cam-handle-swatch" hidden></span>
+                <span class="cam-sheet-title" id="cam-sheet-title">Подсказка</span>
+                <span class="cam-sheet-chevron" aria-hidden="true">▴</span>
+              </span>
+            </button>
+            <div class="cam-sheet-body">
+              <label class="field">Прозрачность картины
+                <input id="op" type="range" min="8" max="70" value="${Math.round((state.overlayOpacity || 0.28) * 100)}" />
+              </label>
+              <label class="field">Этап
+                <select id="cam-step"></select>
+              </label>
+              ${zoomBarHtml(p)}
+              <p class="tiny" id="zoom-hint"></p>
+              <button type="button" class="btn ghost" id="cast-screen">Другой экран</button>
+              <div id="cam-mix"></div>
+              <p class="tiny" id="cam-err" style="color:var(--bad)"></p>
+            </div>
+          </div>
         </div>
       </div>
     `;
@@ -1780,11 +1793,22 @@
     const aspect = p.widthCm / p.heightCm;
     const steps = p.analysis.steps || [];
     const sel = document.getElementById("cam-step");
+    const sheet = document.getElementById("cam-sheet");
+    const scrim = document.getElementById("cam-scrim");
+    const toggle = document.getElementById("cam-sheet-toggle");
     sel.innerHTML = steps.map((s, i) => `<option value="${i}" ${i === (p.stepIndex || 0) ? "selected" : ""}>${esc(s.title)}</option>`).join("");
+    function setSheet(open) {
+      sheet.classList.toggle("open", open);
+      toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      scrim.hidden = !open;
+    }
+    toggle.onclick = () => setSheet(!sheet.classList.contains("open"));
+    scrim.onclick = () => setSheet(false);
     function layout() {
       const root = document.getElementById("cam-root");
-      const hud = document.querySelector(".cam-ui");
-      const extra = hud ? Math.min(160, hud.getBoundingClientRect().height) : 120;
+      const nav = document.getElementById("nav");
+      const handle = document.querySelector(".cam-sheet-handle");
+      const extra = (nav ? nav.getBoundingClientRect().height : 68) + (handle ? handle.getBoundingClientRect().height : 56) + 6;
       const fit = StudioCam.fitFrame(root, aspect, { bottom: extra });
       frame.style.left = fit.left + "px";
       frame.style.top = fit.top + "px";
@@ -1818,8 +1842,20 @@
       const ppm = StudioCam.pxPerMm(state.calibrate);
       const mix = document.getElementById("cam-mix");
       const sh = (step && step.shades && step.shades[0]) || null;
+      const titleEl = document.getElementById("cam-sheet-title");
+      if (titleEl) titleEl.textContent = step ? step.title : "Подсказка";
+      const handleSw = document.getElementById("cam-handle-swatch");
+      if (handleSw) {
+        if (sh && sh.mix) {
+          handleSw.hidden = false;
+          handleSw.style.background = sh.mix.hex;
+        } else {
+          handleSw.hidden = true;
+        }
+      }
       mix.innerHTML = step ? `
         <div class="tiny" style="color:var(--linen);margin:0 0 4px">${esc(step.title)}</div>
+        ${step.teacher ? `<p class="tiny">${esc(step.teacher)}</p>` : ""}
         ${sh ? `<div class="row">
           <span class="swatch" style="background:${esc(sh.mix.hex)}"></span>
           <span class="tiny">${esc(sh.label)}${step.objectName ? " · " + step.objectName : ""}</span>
@@ -1832,7 +1868,7 @@
         opacity: state.overlayOpacity || 0.28,
         gridN: p.gridN,
         zoom: z,
-        highlightCells: z.kind === "full" ? hi : [],
+        highlightCells: hi,
       });
       const bar = document.getElementById("zoom-bar");
       if (bar) {
