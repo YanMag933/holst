@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VER = "10";
+  const VER = "11";
   const SIZES = [
     [20, 30], [30, 40], [40, 50], [50, 50], [50, 70], [60, 80],
   ];
@@ -134,6 +134,95 @@
       0, 0, c.width, c.height
     );
     return c;
+  }
+
+  function cloneStickers(stickers) {
+    return (stickers || []).map((s) => ({
+      id: s.id,
+      imageId: s.imageId,
+      x: s.x,
+      y: s.y,
+      scale: s.scale,
+      rot: s.rot,
+      name: s.name,
+    }));
+  }
+
+  function ensureLayouts(p) {
+    if (!Array.isArray(p.layouts)) p.layouts = [];
+  }
+
+  function layoutThumb() {
+    if (!easel || !easel.canvas || !easel.canvas.isConnected) return "";
+    try {
+      return easel.exportCanvas(140).toDataURL("image/jpeg", 0.55);
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function saveLayout(p, name, updateId) {
+    ensureLayouts(p);
+    const stickers = cloneStickers(easel ? easel.stickers : p.stickers);
+    const thumb = layoutThumb();
+    if (updateId) {
+      const L = p.layouts.find((x) => x.id === updateId);
+      if (L) {
+        L.stickers = stickers;
+        L.thumb = thumb || L.thumb;
+        L.savedAt = Date.now();
+        if (name) L.name = name;
+        p.activeLayoutId = L.id;
+        p.stickers = stickers;
+        return L;
+      }
+    }
+    const layout = {
+      id: uid("l"),
+      name: (name || "").trim() || ("Вариант " + (p.layouts.length + 1)),
+      stickers,
+      thumb,
+      savedAt: Date.now(),
+    };
+    p.layouts.push(layout);
+    p.activeLayoutId = layout.id;
+    p.stickers = stickers;
+    return layout;
+  }
+
+  async function applyLayout(p, id) {
+    ensureLayouts(p);
+    const L = p.layouts.find((x) => x.id === id);
+    if (!L) return;
+    p.stickers = cloneStickers(L.stickers);
+    p.activeLayoutId = L.id;
+    p.analysis = null;
+    exportShot = null;
+    save();
+    if (easel) {
+      easel.stickers = p.stickers;
+      easel.selectedId = null;
+      for (const s of p.stickers) {
+        const url = await fileUrl("cut:" + s.imageId);
+        if (url) easel.setImage(s.imageId, await loadImage(url));
+      }
+      easel.draw();
+    }
+    fillLayouts(p);
+  }
+
+  function toast(msg) {
+    let el = document.getElementById("toast");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "toast";
+      el.className = "toast";
+      document.body.appendChild(el);
+    }
+    el.textContent = msg;
+    el.classList.add("show");
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => el.classList.remove("show"), 1800);
   }
 
   function save() {
@@ -343,31 +432,36 @@
   }
 
   function renderHome() {
-    renderTop("Холст", "Помощник художника");
+    renderTop("Холст", "ателье на телефоне");
     const standalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone;
-    const list = state.projects.map((p) => `
+    const list = state.projects.map((p) => {
+      const layouts = p.layouts || [];
+      const thumb = (layouts.find((x) => x.id === p.activeLayoutId) || layouts[layouts.length - 1] || {}).thumb || "";
+      return `
       <button type="button" class="card project-card" data-open="${esc(p.id)}">
-        <div class="thumb" style="background:${esc(p.bg || "#E8DCC8")}"></div>
+        <div class="thumb" style="background:${esc(p.bg || "#E8DCC8")}">${thumb ? `<img src="${esc(thumb)}" alt=""/>` : ""}</div>
         <div>
           <strong>${esc(p.name)}</strong>
-          <div class="muted">${p.widthCm}×${p.heightCm} см · ${esc(mediumLabel(p.medium))} · ${p.paints.length} красок</div>
+          <div class="muted">${p.widthCm}×${p.heightCm} см · ${esc(mediumLabel(p.medium))} · ${p.paints.length} красок${layouts.length ? " · " + layouts.length + " вар." : ""}</div>
         </div>
         <span class="muted">→</span>
-      </button>
-    `).join("");
+      </button>`;
+    }).join("");
     app.innerHTML = `
       ${!standalone ? `
       <div class="install-banner">
         <div class="grow">
+          <p class="eyebrow">в кармане</p>
           <strong>На домашний экран</strong>
           <div class="tiny">Камера, краски и холст остаются в телефоне — компьютер больше не нужен.</div>
         </div>
         <button type="button" class="btn row" id="install-btn">Установить</button>
       </div>` : ""}
       <div class="hero">
-        <p>Собери картину из референсов. Холст разложит её на этапы и смеси из твоих тюбиков — как в мастерской.</p>
+        <p class="eyebrow">мастерская</p>
+        <p>Собери натюрморт из референсов. Холст узнает каждый предмет, разложит письмо по этапам ателье и смеси из твоих тюбиков.</p>
       </div>
-      ${list || `<div class="empty">Пока нет картин. Создай первую — размер холста и краски.</div>`}
+      ${list ? `<p class="field">Картины</p>${list}` : `<div class="empty">Пока нет картин. Создай первую — размер холста и краски.</div>`}
       <div class="stack">
         <button type="button" class="btn" id="new-project">Новая картина</button>
         <button type="button" class="btn ghost" id="open-howto">Цвета и установка</button>
@@ -406,6 +500,14 @@
       <div class="card">
         <h3>Другой экран</h3>
         <p class="muted">На холсте или в камере нажми «Показать на телевизоре». Открой код на компьютере или Smart TV в браузере — оба в одном Wi‑Fi. Интернет нужен на пару секунд, дальше картина идёт с телефона. Если не находится: транслируй экран телефона как обычно (AirPlay, Google Cast, Smart View) или HDMI.</p>
+      </div>
+      <div class="card">
+        <h3>Порядок письма</h3>
+        <p class="muted">Так пишут в ателье и в классическом натюрморте. 1) Имприматура — тонкий общий тон, чтобы белый грунт не слепил. 2) Рисунок пятнами: все силуэты сразу, масштаб по сетке. 3) Большие тени всей сцены — картина должна читаться как свет/тьма ещё без цвета. 4) Даль и фон широкой кистью — раньше ближнего плана. 5) Каждый предмет отдельно, от дальнего к ближнему: силуэт → тень → локальный цвет → свет. 6) Связка краёв и блики — в самом конце, жирнее и меньше. Деталь, написанная раньше больших отношений, обычно портит картину.</p>
+      </div>
+      <div class="card">
+        <h3>Как мешать</h3>
+        <p class="muted">Мешай на палитре ножом или кистью до однородного пятна, не на холсте. Проверяй смесь рядом с референсом. Тень: без белил или с каплей — белила делают цвет молочным. Свет: белила клади последними и мало. Большие массы чуть жиже, форму гуще, блик совсем густой маленькой кистью. Масло: снизу тощее (растворитель), сверху жирнее (масло из тюбика, потом ещё масла) — иначе верхний слой треснет. Акварель наоборот: от светлого к тёмному, свет — это бумага. Не три сырое пятно. Гуашь светлеет при высыхании — светлые смеси готовь с запасом.</p>
       </div>
       <div class="card">
         <h3>Как задать цвет краски</h3>
@@ -483,6 +585,8 @@
         stepIndex: 0,
         zoomCell: null,
         zoom: { kind: "full", col: 0, row: 0 },
+        layouts: [],
+        activeLayoutId: null,
         createdAt: Date.now(),
       };
       state.projects.unshift(project);
@@ -698,7 +802,7 @@
   }
 
   async function renderCompose(p) {
-    renderTop("Композиция", "вырежи предметы и разложи на холсте");
+    renderTop("Постановка", "предметы и варианты композиции");
     app.innerHTML = `
       <div class="field">Референсы — не больше трёх, старые стираются</div>
       <div class="film" id="ref-film"></div>
@@ -710,7 +814,13 @@
       <div class="film" id="cut-film"></div>
       <div class="easel-wrap" id="easel-wrap"><canvas id="easel"></canvas></div>
       ${zoomBarHtml(p)}
-      <p class="tiny" style="margin:0 0 10px">Коснись клетки — сначала 4 квадрата, ещё раз — один. Так удобнее выкладывать и смотреть детали.</p>
+      <p class="tiny" style="margin:0 0 10px">Коснись клетки — сначала 4 квадрата, ещё раз — один.</p>
+      <div class="field">Варианты композиции</div>
+      <div class="film" id="layout-film"></div>
+      <div class="row wrap" style="margin-bottom:12px">
+        <button type="button" class="btn ghost row" id="save-layout">Сохранить вариант</button>
+        <button type="button" class="btn ghost row" id="update-layout">Обновить этот</button>
+      </div>
       <div class="row wrap" style="margin-top:10px">
         <button type="button" class="btn ghost row" data-nudge="scale-up">крупнее</button>
         <button type="button" class="btn ghost row" data-nudge="scale-down">мельче</button>
@@ -784,7 +894,98 @@
       save();
       hint.textContent = "Объект снят с холста.";
     };
-    mountEasel(p);
+    document.getElementById("save-layout").onclick = () => openSaveLayoutSheet(p, false);
+    document.getElementById("update-layout").onclick = () => {
+      ensureLayouts(p);
+      if (!p.activeLayoutId || !p.layouts.some((x) => x.id === p.activeLayoutId)) {
+        openSaveLayoutSheet(p, true);
+        return;
+      }
+      saveLayout(p, "", p.activeLayoutId);
+      p.analysis = null;
+      save();
+      fillLayouts(p);
+      toast("Вариант обновлён");
+    };
+    mountEasel(p).then(() => fillLayouts(p));
+  }
+
+  function fillLayouts(p) {
+    ensureLayouts(p);
+    const film = document.getElementById("layout-film");
+    if (!film) return;
+    film.innerHTML = "";
+    if (!p.layouts.length) {
+      film.innerHTML = `<div class="muted">Разложи предметы и сохрани вариант. Можно сделать несколько постановок и переключаться между ними.</div>`;
+      return;
+    }
+    p.layouts.forEach((L) => {
+      const el = document.createElement("div");
+      el.className = "film-item layout-item" + (L.id === p.activeLayoutId ? " on" : "");
+      el.innerHTML = `
+        <button type="button" class="film-open">
+          ${L.thumb ? `<img src="${esc(L.thumb)}" alt=""/>` : `<div class="ph">◻</div>`}
+          <span>${esc(L.name)}</span>
+        </button>
+        <button type="button" class="film-x" aria-label="Удалить вариант">×</button>
+      `;
+      el.querySelector(".film-open").onclick = () => applyLayout(p, L.id);
+      el.querySelector(".film-x").onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        p.layouts = p.layouts.filter((x) => x.id !== L.id);
+        if (p.activeLayoutId === L.id) p.activeLayoutId = null;
+        save();
+        fillLayouts(p);
+      };
+      film.appendChild(el);
+    });
+  }
+
+  function openSaveLayoutSheet(p, asUpdate) {
+    ensureLayouts(p);
+    const currentL = p.layouts.find((x) => x.id === p.activeLayoutId);
+    const suggested = asUpdate && currentL
+      ? currentL.name
+      : ("Вариант " + (p.layouts.length + 1));
+    modal.hidden = false;
+    modal.innerHTML = `
+      <div class="sheet" role="dialog" aria-label="Сохранить вариант">
+        <div class="grab"></div>
+        <h3>${asUpdate ? "Обновить вариант" : "Сохранить вариант"}</h3>
+        <p class="tiny">Снимок расстановки на холсте. Потом откроешь любой вариант одним касанием.</p>
+        <label class="field">Название
+          <input id="layout-name" maxlength="40" value="${esc(suggested)}" />
+        </label>
+        <div class="stack" style="margin-top:14px">
+          <button type="button" class="btn" id="layout-ok">${asUpdate ? "Обновить" : "Сохранить"}</button>
+          <button type="button" class="btn ghost" id="layout-cancel">Отмена</button>
+        </div>
+      </div>
+    `;
+    modal.onclick = (e) => {
+      if (e.target === modal) closeModal();
+    };
+    const input = document.getElementById("layout-name");
+    if (input) {
+      input.focus();
+      input.select();
+    }
+    document.getElementById("layout-ok").onclick = (e) => {
+      e.stopPropagation();
+      const name = (document.getElementById("layout-name").value || "").trim();
+      if (asUpdate && currentL) saveLayout(p, name, currentL.id);
+      else saveLayout(p, name);
+      p.analysis = null;
+      save();
+      closeModal();
+      fillLayouts(p);
+      toast(asUpdate ? "Вариант обновлён" : "Вариант сохранён");
+    };
+    document.getElementById("layout-cancel").onclick = (e) => {
+      e.stopPropagation();
+      closeModal();
+    };
   }
 
   async function fillFilms(p) {
@@ -1361,8 +1562,23 @@
     }).join("")}</div>`;
   }
 
+  function stepKindLabel(kind) {
+    return ({
+      ground: "грунт",
+      draw: "рисунок",
+      value: "тон",
+      bg: "даль",
+      object: "предмет",
+      finish: "финиш",
+    })[kind] || "этап";
+  }
+
+  function mixQuality(q) {
+    return q === "ok" ? "смесь близкая" : q === "good" ? "хорошо" : q === "approx" ? "похоже" : "далеко — упрости";
+  }
+
   async function renderSteps(p) {
-    renderTop("Этапы", "как пишет профессионал");
+    renderTop("Этапы", "порядок письма по предметам");
     if (!p.stickers.length) {
       app.innerHTML = `<div class="empty">Сначала собери картину на холсте — хотя бы один вырезанный предмет.</div>`;
       return;
@@ -1371,31 +1587,68 @@
       app.innerHTML = `<div class="empty">Добавь краски. Без тюбиков не из чего считать смеси.</div>`;
       return;
     }
-    app.innerHTML = `<div class="empty" id="an-wait">Смотрю картину и твои краски…</div>`;
-    if (!p.analysis) {
+    app.innerHTML = `<div class="empty" id="an-wait">Смотрю каждый предмет и твои краски…</div>`;
+    if (!p.analysis || !p.analysis.mixLesson || !Array.isArray(p.analysis.objects)) {
       p.analysis = await runAnalysis(p);
       save();
     }
     const a = p.analysis;
     const ppm = StudioCam.pxPerMm(state.calibrate);
+    const objects = a.objects || [];
     app.innerHTML = `
       <div class="verdict ${esc(a.verdict)}">
+        <p class="eyebrow">разбор</p>
         <strong>${a.verdict === "ok" ? "Можно писать" : a.verdict === "approx" ? "Можно, с упрощением цвета" : "Сложно попасть точно"}</strong>
         <p class="muted">${esc(a.summary)}</p>
+        ${a.method ? `<p class="tiny">${esc(a.method)}</p>` : ""}
       </div>
       ${a.issues.map((i) => `<div class="hint">${esc(i)}</div>`).join("")}
+      <div class="card mix-lesson">
+        <p class="eyebrow">как мешать</p>
+        <h3>Палитра</h3>
+        <p class="muted">${esc(a.mixLesson || "")}</p>
+        <ol class="atelier">
+          <li>Общий тон холста</li>
+          <li>Силуэты всех предметов</li>
+          <li>Большие тени сцены</li>
+          <li>Дальний план и фон</li>
+          <li>Каждый предмет: тень → цвет → свет</li>
+          <li>Края и блики в конце</li>
+        </ol>
+      </div>
+      ${objects.length ? `
+      <div class="card roster">
+        <p class="eyebrow">на холсте</p>
+        <h3>Предметы</h3>
+        <p class="tiny">Каждый вырезанный объект — отдельный этап. Дальние пишут раньше ближних.</p>
+        ${objects.map((o) => {
+          const idx = (a.steps || []).findIndex((s) => s.stickerId === o.id);
+          return `
+            <button type="button" class="object-row" data-jump="${idx}">
+              <span class="depth-dot" title="${esc(o.depthLabel)}"></span>
+              <span>
+                <strong>${esc(o.name)}</strong>
+                <div class="tiny">${esc(o.loc)} · ${esc(o.depthLabel)}${o.cells && o.cells.length ? " · " + o.cells.slice(0, 4).map((c) => c.label).join(" ") : ""}</div>
+              </span>
+              <span class="muted">${idx >= 0 ? "этап" : ""}</span>
+            </button>`;
+        }).join("")}
+      </div>` : ""}
       ${(a.steps || []).map((s, idx) => `
-        <div class="card">
+        <div class="card step-card" id="step-${idx}">
+          <div class="row wrap" style="justify-content:space-between;align-items:baseline">
+            <span class="kind-pill">${esc(stepKindLabel(s.kind))}</span>
+          </div>
           <h3>${esc(s.title)}</h3>
           <p class="muted">${esc(s.teacher)}</p>
-          <p class="tiny">Клетки сетки: ${(s.cells || []).slice(0, 12).map((c) => c.label).join(", ")}${(s.cells || []).length > 12 ? "…" : ""}</p>
+          <p class="tiny">Клетки: ${(s.cells || []).slice(0, 12).map((c) => c.label).join(", ")}${(s.cells || []).length > 12 ? "…" : ""}</p>
           ${(s.shades || []).map((sh) => `
-            <div style="margin-top:12px">
+            <div class="shade-block">
               <div class="row">
                 <span class="swatch" style="background:${esc(sh.mix.hex)}"></span>
                 <div>
                   <strong>${esc(sh.label)}</strong>
-                  <div class="tiny">${esc(sh.mix.quality === "ok" ? "смесь близкая" : sh.mix.quality === "good" ? "хорошо" : sh.mix.quality === "approx" ? "похоже" : "далеко — упрости")}</div>
+                  <div class="tiny">${esc(mixQuality(sh.mix.quality))}</div>
                 </div>
               </div>
               ${blobMix(sh.mix.parts || [])}
@@ -1409,14 +1662,23 @@
         </div>
       `).join("")}
     `;
+    const goCam = (idx) => {
+      p.stepIndex = Number(idx);
+      p.zoomCell = null;
+      p.zoom = { kind: "full", col: 0, row: 0 };
+      state.tab = "camera";
+      save();
+      render();
+    };
     app.querySelectorAll("[data-cam-step]").forEach((b) => {
+      b.onclick = () => goCam(b.dataset.camStep);
+    });
+    app.querySelectorAll("[data-jump]").forEach((b) => {
       b.onclick = () => {
-        p.stepIndex = Number(b.dataset.camStep);
-        p.zoomCell = null;
-        p.zoom = { kind: "full", col: 0, row: 0 };
-        state.tab = "camera";
-        save();
-        render();
+        const idx = Number(b.dataset.jump);
+        if (idx < 0) return;
+        const el = document.getElementById("step-" + idx);
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
       };
     });
   }
@@ -1556,12 +1818,13 @@
       const ppm = StudioCam.pxPerMm(state.calibrate);
       const mix = document.getElementById("cam-mix");
       const sh = (step && step.shades && step.shades[0]) || null;
-      mix.innerHTML = sh ? `
-        <div class="row">
+      mix.innerHTML = step ? `
+        <div class="tiny" style="color:var(--linen);margin:0 0 4px">${esc(step.title)}</div>
+        ${sh ? `<div class="row">
           <span class="swatch" style="background:${esc(sh.mix.hex)}"></span>
-          <span class="tiny">${esc(sh.label)}</span>
+          <span class="tiny">${esc(sh.label)}${step.objectName ? " · " + step.objectName : ""}</span>
           <span class="stroke-preview" style="--stroke:${Math.min(48, (sh.strokeMm || 10) * ppm)}px;background:${esc(sh.mix.hex)};margin:0 0 0 auto"></span>
-        </div>
+        </div>` : ""}
       ` : "";
       StudioCam.drawOverlay({
         canvas: ov,
@@ -1671,6 +1934,9 @@
   boot.then((s) => {
     if (s && s.projects) {
       state = Object.assign(emptyState(), s);
+      state.projects.forEach((p) => {
+        if (!Array.isArray(p.layouts)) p.layouts = [];
+      });
       if (!watchCode()) render();
     }
   }).catch(() => {});

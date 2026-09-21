@@ -37,20 +37,93 @@ window.StudioAnalyze = (function () {
     return null;
   }
 
-  function teacherForMedium(medium, stepIndex, title) {
-    const oil = medium === "watercolor";
-    if (stepIndex === 0) {
-      return oil
-        ? "Акварель начинается с белого листа: не закрашиваем всё сразу. Сначала лёгкая общая тонировка неба/фона — слабый чай, почти вода."
-        : "Профессионал не прыгает к деталям. Сначала закрываем белый грунт общим тоном — имприматура. Тонкий слой, чтобы холст перестал слепить и все следующие цвета легли родственно.";
+  function roman(n) {
+    const r = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII", "XIII", "XIV", "XV", "XVI"];
+    return r[n - 1] || String(n);
+  }
+
+  function objectName(s, i) {
+    const n = String(s.name || "").trim();
+    if (n && n !== "предмет") return n;
+    return "Предмет " + (i + 1);
+  }
+
+  function mixLesson(medium) {
+    if (medium === "watercolor") {
+      return "Акварель пишут от светлого к тёмному. Белила почти не нужны: свет — это бумага, её берегут. Мешай на палитре лужицу, проверяй на обрезке. Сначала слабый чай по большим массам, каждый следующий слой чуть темнее и чуть гуще. Не три сырое пятно — дай высохнуть, иначе будет грязь. Детали и самые тёмные акценты — в конце.";
     }
-    if (title.indexOf("Фон") === 0) {
-      return "Большие массы пишем широко. Кисть лежит плашмя, мазки длинные. Не вырисовываем облачко — кладём пятно.";
+    if (medium === "gouache") {
+      return "Гуашь кроющая: можно и светлым по тёмному. Мешай на палитре до ровного пятна, чуть гуще молока. Светлые смеси готовь с запасом — высохнув, гуашь светлеет. Большие плоскости чуть жиже, форму — пастознее. Не шлифуй край, пока пятно не стоит.";
     }
-    if (stepIndex < 3) {
-      return "Сначала силуэт и место предмета на холсте. Поставь его как пятно: темнее / светлее фона. Пока без глаз, бликов и прожилок.";
+    if (medium === "acrylic") {
+      return "Акрил сохнет быстро, правило «жирное по тощему» к нему не относится. Мешай на палитре, в тень белила почти не клади — они делают цвет меловым. Большие массы чуть жиже, форму — гуще. Если слой схватился, не растушёвывай его в грязь: клади соседнее пятно рядом. Свет и блик — последними.";
     }
-    return "Теперь форма: тень, свет, рефлекс. Детали — в конце, когда пятно уже стоит на своём месте.";
+    return "Масло: жирное по тощему. Сначала растворитель, потом краска из тюбика, блики — с каплей масла. На палитре мешай ножом до однородного пятна. Тень — без белил или с каплей, иначе молоко. Свет — белила в конце, мало. Большие массы широко и жидко, форму гуще, блик совсем густой маленькой кистью. Пока не встали большие отношения светлее/темнее — не берись за детали.";
+  }
+
+  function teacherGround(medium) {
+    if (medium === "watercolor") {
+      return "Не закрывай весь лист. Лёгкая общая тонировка фона — слабый чай, почти вода. Места будущих бликов и самых светлых предметов оставь белыми.";
+    }
+    if (medium === "acrylic") {
+      return "Закрой белый грунт тонким общим тоном — имприматура. Кисть широкая, слой полупрозрачный. Так все следующие цвета лягут родственно, и белизна перестанет слепить глаз.";
+    }
+    if (medium === "gouache") {
+      return "Тонкий общий тон грунта. Не паста: холст должен чуть просвечивать. Когда белизна ушла, легче судить, что темнее, а что светлее.";
+    }
+    return "Профессионал не прыгает к яблоку. Сначала имприматура — тонкий общий тон холста (часто умбра или охра с растворителем). Слой тощий, почти лессировка. Дай слегка схватиться. Белый грунт врёт глазу: на нём любая смесь кажется темнее, чем есть.";
+  }
+
+  function teacherDraw(medium) {
+    if (medium === "watercolor") {
+      return "Лёгким карандашом или совсем слабым пятном поставь силуэты всех предметов. Не обводи контур — наметь пятно. Проверь, что крупное остаётся крупным, а мелочь не заползла в центр.";
+    }
+    return "Кистью, не карандашом: поставь все предметы как пятна. Сначала вся картина целиком — кто где стоит, кто больше, кто дальше. Без глаз, бликов и складок. Если силуэт врёт, потом цвет это не спасёт.";
+  }
+
+  function teacherValue(medium) {
+    if (medium === "watercolor") {
+      return "Найди самые тёмные места и пока только наметь их чуть сильнее фона. Светлые области не трогай. Картина должна читаться уже как свет и тень, без цвета.";
+    }
+    return "Ценность важнее цвета: картина с верными светлотой и тенью выглядит правдивее, чем с точным «магазинным» оттенком. Закрой большие тени всей сцены. Света пока почти не пиши. Край тени мягкий.";
+  }
+
+  function teacherBg(medium) {
+    if (medium === "watercolor") {
+      return "Фон пишут рано, пока лист ещё живой. Большие заливки, кисть плашмя, от края к предметам. У силуэтов можно чуть зайти на пятно — потом предмет сядет сверху.";
+    }
+    return "Фон и даль — раньше переднего плана. Широкая кисть, длинный мазок, без окон и листочков. Предметы потом врежутся в фон, и край получится живым. Пиши от дальнего к ближнему.";
+  }
+
+  function teacherObject(medium, name, loc, depthLabel, total) {
+    const head = `${name} — ${loc}, ${depthLabel}.`;
+    if (medium === "watercolor") {
+      return head + " Сначала силуэт слабым локальным цветом, потом тень чуть гуще, свет — бумага. Детали только когда пятно стоит на месте. Не вылизывай предмет, пока не написаны соседи.";
+    }
+    return head + " Порядок внутри предмета: 1) силуэт и место, 2) тень, 3) средний «локальный» цвет, 4) свет, 5) блик в самом конце. " +
+      (total > 1 ? "Этот предмет пишем после более дальних — так ближний край ляжет поверх." : "Пока пятно не стоит, не берись за фактуру.");
+  }
+
+  function teacherFinish(medium) {
+    if (medium === "watercolor") {
+      return "Связка: где край режет — смочи и приглуши. Самые тёмные акценты и пара сухих деталей. Белую бумагу в бликах уже не закрашивай.";
+    }
+    return "Пройдись по всей картине, не по одному предмету. Где край слишком острый — приглуши (потерянный край). Один-два самых светлых блика и самый тёмный акцент. Не детализируй всё одинаково — глаз сам достроит. В масле блик клади жирнее нижних слоёв.";
+  }
+
+  function howForRole(medium, role) {
+    if (medium === "watercolor") {
+      if (role === "shadow") return "Чуть гуще, чем фон. Клади по форме, не затирай. Светлые места обойди.";
+      if (role === "light") return "Часто это просто бумага. Если пишешь — очень жидко, один проход.";
+      return "Слабый локальный тон. Проверь на обрезке бумаги, что лужица не темнее нужного.";
+    }
+    if (role === "shadow") {
+      return "Сначала тень — предмет сразу сядет в пространство. На палитре без белил или с каплей. Клади пятном, край мягкий к полутону.";
+    }
+    if (role === "light") {
+      return "Свет в конце. Белила добавляй последними и мало, иначе предмет станет меловым. Не разбели весь силуэт — оставь полутон.";
+    }
+    return "Средний тон — «настоящий» цвет предмета при обычном свете. Им закрывают большую часть силуэта после тени.";
   }
 
   function shadeName(hex, role) {
@@ -69,6 +142,13 @@ window.StudioAnalyze = (function () {
       else if (i === sorted.length - 1 && sorted.length > 1) role = "light";
       return { ...c, role, label: shadeName(c.hex, role) };
     });
+  }
+
+  function depthLabel(i, total) {
+    if (total <= 1) return "единственный предмет на холсте";
+    if (i === 0) return "дальше всех, пишем раньше ближних";
+    if (i === total - 1) return "ближе к зрителю, пишем последним из предметов";
+    return "средний план, после дальних";
   }
 
   function analyze(opts) {
@@ -95,24 +175,24 @@ window.StudioAnalyze = (function () {
     const approx = mixes.filter((m) => m.mix.quality === "approx");
     if (!paints.length) issues.push("Нет ни одной краски — анализ смешения невозможен.");
     const hasWhite = paints.some((p) => /белил|white/i.test(p.name) || ColorKit.luminance(p.hex) > 88);
-    if (!hasWhite) issues.push("Нет белил. Без них почти не сделать светлые оттенки и не высветлить смеси. Добавь титановые или цинковые белила.");
+    if (!hasWhite && medium !== "watercolor") {
+      issues.push("Нет белил. Без них почти не сделать светлые оттенки. Добавь титановые или цинковые белила.");
+    }
     const hasBlack = paints.some((p) => /сажа|чёрн|черн|black/i.test(p.name) || ColorKit.luminance(p.hex) < 18);
     if (!hasBlack && medium !== "watercolor") {
-      issues.push("Нет чёрной. Можно темнить умброй и ультрамарином — это даже живописнее, но глубокие тени будут сложнее.");
+      issues.push("Нет чёрной. Темнить умброй и ультрамарином живописнее, но глубокие тени будут сложнее.");
     }
     if (hard.length) {
       issues.push(
-        "Некоторые оттенки картины далеко от твоих тюбиков: " +
+        "Некоторые оттенки далеко от твоих тюбиков: " +
           hard.slice(0, 3).map((h) => h.name).join(", ") +
           ". Возьми ближайшую смесь и упрости цвет — картина от этого часто становится цельной."
       );
     }
     if (approx.length) {
-      issues.push("Часть цветов получится «похожими», не музейными. Для учебной картины этого достаточно: важнее отношения светлее/темнее, чем точный бренд-колор.");
+      issues.push("Часть цветов получится «похожими», не музейными. Для учебной картины важнее светлее/темнее, чем точный бренд-колор.");
     }
 
-    const usedIds = new Set();
-    mixes.forEach((m) => m.mix.parts.forEach((p) => usedIds.add(p.id)));
     mixes.forEach((m) => {
       m.mix.parts.forEach((p) => {
         const paint = paints.find((x) => x.id === p.id);
@@ -123,16 +203,38 @@ window.StudioAnalyze = (function () {
 
     let verdict = "ok";
     if (!paints.length || hard.length > 2) verdict = "hard";
-    else if (hard.length || approx.length > 2 || !hasWhite) verdict = "approx";
+    else if (hard.length || approx.length > 2 || (!hasWhite && medium !== "watercolor")) verdict = "approx";
 
     const summary =
       verdict === "ok"
-        ? "Эту картину можно собрать из твоих красок. Смесей хватит, если не гнаться за каждым фото-оттенком."
+        ? "Эту картину можно собрать из твоих красок. Пиши по порядку мастерской: тон, пятна, даль, потом каждый предмет, блики в конце."
         : verdict === "approx"
-          ? "Картину нарисовать можно, но часть оттенков будет приблизительной. Ниже — как мешать и где упростить."
-          : "С текущим набором точно попасть в референс трудно. Напиши картину пятнами: свет / полутон / тень из ближайших смесей.";
+          ? "Картину нарисовать можно, но часть оттенков будет приблизительной. Ниже — как мешать и в каком порядке закрывать холст."
+          : "С текущим набором точно попасть в референс трудно. Пиши пятнами: свет / полутон / тень из ближайших смесей.";
+
+    const ordered = stickers.slice();
+    const objects = ordered.map((s, i) => {
+      const cells = cellsCovered(s, n);
+      const loc = locationPhrase(s);
+      const name = objectName(s, i);
+      const objectClusters = (s.clusters && s.clusters.length ? s.clusters : mixes.slice(0, 3));
+      const roles = clusterRoles(objectClusters).slice(0, 4);
+      return {
+        id: s.id,
+        name,
+        loc,
+        depth: i,
+        depthLabel: depthLabel(i, ordered.length),
+        cells,
+        roles,
+      };
+    });
 
     const steps = [];
+    const push = (step) => {
+      step.title = roman(steps.length + 1) + ". " + step.heading;
+      steps.push(step);
+    };
 
     const ground = mixes[0] || { hex: "#CDBA9A", mix: ColorKit.bestMix("#CDBA9A", paints), share: 1, name: "грунт" };
     const muted = ColorKit.bestMix(
@@ -143,10 +245,11 @@ window.StudioAnalyze = (function () {
       ),
       paints
     );
-    steps.push({
+    push({
       id: "ground",
-      title: "1. Имприматура — общий тон холста",
-      teacher: teacherForMedium(medium, 0, ""),
+      heading: "Имприматура — общий тон холста",
+      kind: "ground",
+      teacher: teacherGround(medium),
       cells: allCells(n),
       preview: "full",
       shades: [
@@ -157,7 +260,54 @@ window.StudioAnalyze = (function () {
           strokeMm: strokeFor(1, "ground"),
           how: medium === "watercolor"
             ? "Очень жидко, почти вода. Оставь белые места, если они будут светиться позже."
-            : "Тонкий слой, кисть широкая. Не паста — полупрозрачная плёнка. Дай слегка схватиться.",
+            : "Тонкий слой, кисть широкая. Не паста — полупрозрачная плёнка. В масле это самый тощий слой.",
+        },
+      ],
+    });
+
+    const names = objects.map((o) => o.name);
+    const drawCells = [];
+    const seenCell = new Set();
+    objects.forEach((o) => o.cells.forEach((c) => {
+      const k = c.col + ":" + c.row;
+      if (!seenCell.has(k)) { seenCell.add(k); drawCells.push(c); }
+    }));
+    push({
+      id: "draw",
+      heading: objects.length
+        ? "Рисунок — силуэты всех предметов"
+        : "Рисунок — крупные пятна",
+      kind: "draw",
+      teacher: teacherDraw(medium) + (names.length ? " На холсте: " + names.join(", ") + "." : ""),
+      cells: drawCells.length ? drawCells : allCells(n),
+      preview: "full",
+      objects: objects.map((o) => ({ id: o.id, name: o.name, loc: o.loc })),
+      shades: [
+        {
+          hex: muted.hex,
+          label: "пятно рисунка",
+          mix: muted,
+          strokeMm: strokeFor(0.2, "form"),
+          how: "Один тон, без моделировки. Проверь масштаб предметов друг к другу по сетке.",
+        },
+      ],
+    });
+
+    const darkMix = mixes.slice().sort((a, b) => ColorKit.luminance(a.hex) - ColorKit.luminance(b.hex))[0] || ground;
+    push({
+      id: "value",
+      heading: "Тон — большие тени всей картины",
+      kind: "value",
+      teacher: teacherValue(medium),
+      cells: allCells(n),
+      preview: "full",
+      shades: [
+        {
+          hex: darkMix.hex,
+          label: "большая тень сцены",
+          mix: darkMix.mix,
+          strokeMm: strokeFor(darkMix.share || 0.3, "block"),
+          how: "Закрой все крупные тёмные массы сразу — фон, падающие тени, тёмные бока предметов. Свет пока не пиши.",
         },
       ],
     });
@@ -167,51 +317,44 @@ window.StudioAnalyze = (function () {
       label: i === 0 ? "большая масса фона" : "второй тон фона",
       mix: c.mix,
       strokeMm: strokeFor(c.share, "block"),
-      how: "Клади пятном по клеткам сетки. Сверь мазок с кружком на экране.",
+      how: "Клади пятном по клеткам. Не вырисовывай. Сверь мазок с кружком на экране.",
     }));
-    steps.push({
+    push({
       id: "bg",
-      title: "2. Фон — большие пятна",
-      teacher: teacherForMedium(medium, 1, "Фон"),
+      heading: "Дальний план и фон",
+      kind: "bg",
+      teacher: teacherBg(medium),
       cells: allCells(n),
       preview: "full",
       shades: bgMixes,
     });
 
-    const ordered = stickers.slice();
-    ordered.forEach((s, idx) => {
-      const cells = cellsCovered(s, n);
-      const loc = locationPhrase(s);
-      const objectClusters = (s.clusters && s.clusters.length ? s.clusters : mixes.slice(0, 3));
-      const roles = clusterRoles(objectClusters).slice(0, 4);
-      const shades = roles.map((c) => ({
+    objects.forEach((o) => {
+      const shades = o.roles.map((c) => ({
         hex: c.hex,
         label: c.label,
         mix: c.mix || ColorKit.bestMix(c.hex, paints),
         strokeMm: strokeFor(c.share || 0.1, c.role === "light" ? "detail" : "form"),
-        how:
-          c.role === "shadow"
-            ? "Сначала тень — предмет сразу начнёт стоять в пространстве."
-            : c.role === "light"
-              ? "Свет в конце. Не разбели весь предмет, оставь полутон живым."
-              : "Средний тон — это «настоящий» цвет предмета в обычном свете.",
+        how: howForRole(medium, c.role),
       }));
-      steps.push({
-        id: s.id,
-        title: `${3 + idx}. ${s.name || "Предмет"} — ${loc}`,
-        teacher: teacherForMedium(medium, 2 + idx, s.name || ""),
-        cells,
+      push({
+        id: o.id,
+        heading: o.name + " — " + o.loc,
+        kind: "object",
+        teacher: teacherObject(medium, o.name, o.loc, o.depthLabel, objects.length),
+        cells: o.cells,
         preview: "sticker",
-        stickerId: s.id,
+        stickerId: o.id,
+        objectName: o.name,
         shades,
       });
     });
 
-    steps.push({
+    push({
       id: "finish",
-      title: `${3 + stickers.length}. Связка, акценты, блики`,
-      teacher:
-        "Пройдись по всей картине: где край слишком режет — приглуши. Один-два самых светлых блика и самый тёмный акцент. Не детализируй всё одинаково — глаз сам достроит.",
+      heading: "Связка, края, блики",
+      kind: "finish",
+      teacher: teacherFinish(medium),
       cells: allCells(n),
       preview: "full",
       shades: mixes
@@ -223,7 +366,7 @@ window.StudioAnalyze = (function () {
           label: ColorKit.luminance(c.hex) > 60 ? "блик / самый свет" : "акцент",
           mix: c.mix,
           strokeMm: 3,
-          how: "Маленькая кисть. Один уверенный мазок, не размазывай.",
+          how: "Маленькая кисть. Один уверенный мазок. В масле блик жирнее нижнего слоя.",
         })),
     });
 
@@ -233,6 +376,16 @@ window.StudioAnalyze = (function () {
       issues,
       palette: mixes,
       steps,
+      objects,
+      mixLesson: mixLesson(medium),
+      method:
+        medium === "watercolor"
+          ? "Акварель: светлое → тёмное, бумага = блик."
+          : medium === "acrylic"
+            ? "Акрил: большие пятна → форма → свет. Сохнет быстро."
+            : medium === "gouache"
+              ? "Гуашь: пятно, потом свет поверх, край в конце."
+              : "Масло: тощее → жирное, тень → свет, даль → ближний план.",
       widthCm,
       heightCm,
       gridN: n,
