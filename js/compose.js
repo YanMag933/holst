@@ -16,6 +16,8 @@ window.Easel = (function () {
     this.lastPinch = null;
     this.holdTimer = 0;
     this.pendingHoldMenu = false;
+    this.view = { kind: "full", col: 0, row: 0 };
+    this.tapGrid = null;
     this.dpr = Math.min(2, window.devicePixelRatio || 1);
     this._bind();
     this.resize();
@@ -28,6 +30,7 @@ window.Easel = (function () {
     this.widthCm = scene.widthCm || 30;
     this.heightCm = scene.heightCm || 40;
     this.aspect = this.widthCm / this.heightCm;
+    if (scene.view) this.view = scene.view;
     this.draw();
   };
 
@@ -54,9 +57,45 @@ window.Easel = (function () {
     return { w: this.canvas.clientWidth, h: this.canvas.clientHeight };
   };
 
+  Easel.blockOf = function (col, row, n) {
+    const span = Math.min(2, Math.max(1, n || 4));
+    return {
+      col: Math.max(0, Math.min(col, n - span)),
+      row: Math.max(0, Math.min(row, n - span)),
+      span: span,
+    };
+  };
+
+  Easel.viewRect = function (view, n) {
+    n = n || 4;
+    const v = view || { kind: "full" };
+    if (!v.kind || v.kind === "full") return { x: 0, y: 0, w: 1, h: 1 };
+    if (v.kind === "cell") {
+      return { x: (v.col || 0) / n, y: (v.row || 0) / n, w: 1 / n, h: 1 / n };
+    }
+    const b = Easel.blockOf(v.col || 0, v.row || 0, n);
+    return { x: b.col / n, y: b.row / n, w: b.span / n, h: b.span / n };
+  };
+
+  Easel.prototype.viewRect = function () {
+    return Easel.viewRect(this.view, this.gridN);
+  };
+
+  Easel.prototype.setView = function (view) {
+    this.view = view || { kind: "full", col: 0, row: 0 };
+    this.draw();
+  };
+
   Easel.prototype.eventPos = function (e) {
     const r = this.canvas.getBoundingClientRect();
-    return { x: e.clientX - r.left, y: e.clientY - r.top };
+    const { w, h } = this.cssSize();
+    const v = this.viewRect();
+    const lx = e.clientX - r.left;
+    const ly = e.clientY - r.top;
+    return {
+      x: (v.x + (lx / Math.max(1, r.width)) * v.w) * w,
+      y: (v.y + (ly / Math.max(1, r.height)) * v.h) * h,
+    };
   };
 
   Easel.prototype.stickerSize = function (s) {
@@ -72,7 +111,8 @@ window.Easel = (function () {
   Easel.prototype.hitHandle = function (s, p) {
     const { sw, sh } = this.stickerSize(s);
     const loc = this.worldToLocal(s, p.x, p.y);
-    const hs = 18;
+    const v = this.viewRect();
+    const hs = 18 * Math.max(v.w, v.h);
     const corners = [
       { id: "scale", x: sw / 2, y: sh / 2 },
       { id: "scale", x: -sw / 2, y: sh / 2 },
@@ -82,7 +122,7 @@ window.Easel = (function () {
     for (const c of corners) {
       if (Math.abs(loc.x - c.x) < hs && Math.abs(loc.y - c.y) < hs) return "scale";
     }
-    if (Math.abs(loc.x) < hs && Math.abs(loc.y + sh / 2 + 28) < hs) return "rotate";
+    if (Math.abs(loc.x) < hs && Math.abs(loc.y + sh / 2 + 28 * Math.max(v.w, v.h)) < hs) return "rotate";
     if (Math.abs(loc.x) <= sw / 2 && Math.abs(loc.y) <= sh / 2) return "body";
     return null;
   };
@@ -129,6 +169,7 @@ window.Easel = (function () {
     this.pointers.set(e.pointerId, p);
     this.clearHold();
     this.pendingHoldMenu = false;
+    this.tapGrid = null;
     if (this.pointers.size === 2) {
       this.lastPinch = this.pinchState();
       this.mode = "pinch";
@@ -138,6 +179,7 @@ window.Easel = (function () {
     if (!hit) {
       this.selectedId = null;
       this.mode = "idle";
+      this.tapGrid = { p };
       this.draw();
       if (this.opts.onSelect) this.opts.onSelect(null);
       return;
@@ -233,6 +275,9 @@ window.Easel = (function () {
     this.clearHold();
     const openMenu = this.pendingHoldMenu && this.mode === "hold";
     this.pendingHoldMenu = false;
+    const p = this.eventPos(e);
+    const tap = this.tapGrid;
+    this.tapGrid = null;
     this.pointers.delete(e.pointerId);
     if (this.pointers.size < 2) this.mode = this.pointers.size ? this.mode : "idle";
     if (!this.pointers.size) {
@@ -242,6 +287,17 @@ window.Easel = (function () {
     if (openMenu && this.opts.onLongPress) {
       const s = this.stickers.find((x) => x.id === this.selectedId);
       if (s) this.opts.onLongPress(s);
+      return;
+    }
+    if (tap && this.opts.onGridTap && this.pointers.size === 0) {
+      const moved = Math.hypot(p.x - tap.p.x, p.y - tap.p.y);
+      if (moved < 12) {
+        const { w, h } = this.cssSize();
+        const n = this.gridN || 4;
+        const col = Math.min(n - 1, Math.max(0, Math.floor((tap.p.x / Math.max(1, w)) * n)));
+        const row = Math.min(n - 1, Math.max(0, Math.floor((tap.p.y / Math.max(1, h)) * n)));
+        this.opts.onGridTap({ col, row });
+      }
     }
   };
 
@@ -287,12 +343,22 @@ window.Easel = (function () {
 
   Easel.prototype.draw = function () {
     const ctx = this.ctx;
-    const W = this.canvas.width, H = this.canvas.height;
     const { w, h } = this.cssSize();
+    const v = this.viewRect();
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = "#0a0806";
+    ctx.fillRect(0, 0, w, h);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, w, h);
+    ctx.clip();
+    ctx.scale(1 / v.w, 1 / v.h);
+    ctx.translate(-v.x * w, -v.y * h);
     ctx.fillStyle = this.bg;
     ctx.fillRect(0, 0, w, h);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
 
     for (const s of this.stickers) {
       const img = this.images[s.imageId];
@@ -310,15 +376,16 @@ window.Easel = (function () {
     const sel = this.stickers.find((x) => x.id === this.selectedId);
     if (sel && this.images[sel.imageId]) {
       const { sw, sh } = this.stickerSize(sel);
+      const k = Math.max(v.w, v.h);
       ctx.save();
       ctx.translate(sel.x * w, sel.y * h);
       ctx.rotate(sel.rot || 0);
       ctx.strokeStyle = "#d4552b";
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([5, 4]);
+      ctx.lineWidth = 1.5 * k;
+      ctx.setLineDash([5 * k, 4 * k]);
       ctx.strokeRect(-sw / 2, -sh / 2, sw, sh);
       ctx.setLineDash([]);
-      const hs = 7;
+      const hs = 7 * k;
       const corners = [
         [-sw / 2, -sh / 2], [sw / 2, -sh / 2], [-sw / 2, sh / 2], [sw / 2, sh / 2],
       ];
@@ -332,14 +399,15 @@ window.Easel = (function () {
       }
       ctx.beginPath();
       ctx.moveTo(0, -sh / 2);
-      ctx.lineTo(0, -sh / 2 - 28);
+      ctx.lineTo(0, -sh / 2 - 28 * k);
       ctx.stroke();
       ctx.beginPath();
-      ctx.arc(0, -sh / 2 - 28, 6, 0, Math.PI * 2);
+      ctx.arc(0, -sh / 2 - 28 * k, 6 * k, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
       ctx.restore();
     }
+    ctx.restore();
   };
 
   Easel.prototype.drawGrid = function (ctx, w, h) {
@@ -373,6 +441,8 @@ window.Easel = (function () {
       out.width = Math.round(long * this.aspect);
     }
     const ctx = out.getContext("2d");
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
     ctx.fillStyle = this.bg;
     ctx.fillRect(0, 0, out.width, out.height);
     for (const s of this.stickers) {

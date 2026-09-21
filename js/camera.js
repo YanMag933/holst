@@ -71,6 +71,7 @@ window.StudioCam = (function () {
       exportCanvas,
       opacity,
       gridN,
+      zoom,
       zoomCell,
       highlightCells,
       stepCanvas,
@@ -82,20 +83,22 @@ window.StudioCam = (function () {
     const src = stepCanvas || exportCanvas;
     if (!src) return;
 
-    let sx = 0, sy = 0, sw = src.width, sh = src.height;
     const n = gridN || 4;
-    if (zoomCell) {
-      sw = src.width / n;
-      sh = src.height / n;
-      sx = zoomCell.col * sw;
-      sy = zoomCell.row * sh;
-    }
+    const view = zoom || (zoomCell ? { kind: "cell", col: zoomCell.col, row: zoomCell.row } : { kind: "full" });
+    const rect = window.Easel && Easel.viewRect ? Easel.viewRect(view, n) : { x: 0, y: 0, w: 1, h: 1 };
+    const sx = rect.x * src.width;
+    const sy = rect.y * src.height;
+    const sw = rect.w * src.width;
+    const sh = rect.h * src.height;
 
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
     ctx.globalAlpha = opacity;
     ctx.drawImage(src, sx, sy, sw, sh, 0, 0, W, H);
     ctx.globalAlpha = 1;
 
-    const gn = zoomCell ? 2 : n;
+    const kind = view.kind || "full";
+    const gn = kind === "full" ? n : 2;
     ctx.save();
     ctx.strokeStyle = "rgba(255,255,255,0.11)";
     ctx.lineWidth = Math.max(0.5, W / 900);
@@ -110,22 +113,31 @@ window.StudioCam = (function () {
       ctx.stroke();
     }
 
-    if (!zoomCell && highlightCells && highlightCells.length) {
+    if (kind === "full" && highlightCells && highlightCells.length) {
       ctx.fillStyle = "rgba(212,181,106,0.07)";
       highlightCells.forEach((c) => {
         ctx.fillRect((c.col / n) * W, (c.row / n) * H, W / n, H / n);
       });
     }
 
-    if (!zoomCell) {
-      ctx.font = Math.max(8, Math.round(W / 48)) + "px Palatino, serif";
+    if (kind !== "cell") {
+      ctx.font = Math.max(10, Math.round(W / (kind === "quad" ? 18 : 48))) + "px Palatino, serif";
       ctx.textAlign = "left";
       ctx.textBaseline = "top";
-      for (let r = 0; r < n; r++) {
-        for (let c = 0; c < n; c++) {
-          const hot = highlightCells && highlightCells.some((x) => x.col === c && x.row === r);
-          ctx.fillStyle = hot ? "rgba(232,204,126,0.38)" : "rgba(255,255,255,0.16)";
-          ctx.fillText(StudioAnalyze.cellLabel(c, r, n), (c / n) * W + 3, (r / n) * H + 3);
+      const c0 = Math.round(rect.x * n);
+      const r0 = Math.round(rect.y * n);
+      const span = Math.max(1, Math.round(rect.w * n));
+      for (let r = 0; r < span; r++) {
+        for (let c = 0; c < span; c++) {
+          const col = c0 + c;
+          const row = r0 + r;
+          const hot = highlightCells && highlightCells.some((x) => x.col === col && x.row === row);
+          ctx.fillStyle = hot ? "rgba(232,204,126,0.45)" : "rgba(255,255,255,0.2)";
+          ctx.fillText(
+            StudioAnalyze.cellLabel(col, row, n),
+            (c / span) * W + 6,
+            (r / span) * H + 6
+          );
         }
       }
     }

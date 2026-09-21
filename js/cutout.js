@@ -405,7 +405,10 @@ window.Cutout = (function () {
     const c = document.createElement("canvas");
     c.width = w;
     c.height = h;
-    c.getContext("2d").drawImage(image, 0, 0, w, h);
+    const ctx = c.getContext("2d");
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(image, 0, 0, w, h);
     return c;
   }
 
@@ -417,18 +420,45 @@ window.Cutout = (function () {
     return scribble;
   }
 
-  function cropCanvas(image, box, nw, nh) {
+  function cropCanvas(image, box, nw, nh, maxSide) {
     const sx = (box.minX / box.sw) * nw;
     const sy = (box.minY / box.sh) * nh;
     const sw = ((box.maxX - box.minX + 1) / box.sw) * nw;
     const sh = ((box.maxY - box.minY + 1) / box.sh) * nh;
-    const maxSide = 768;
-    const scale = Math.min(1, maxSide / Math.max(sw, sh, 1));
+    const cap = maxSide || 2048;
+    const scale = Math.min(1, cap / Math.max(sw, sh, 1));
     const c = document.createElement("canvas");
     c.width = Math.max(2, Math.round(sw * scale));
     c.height = Math.max(2, Math.round(sh * scale));
-    c.getContext("2d").drawImage(image, sx, sy, sw, sh, 0, 0, c.width, c.height);
+    const ctx = c.getContext("2d");
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(image, sx, sy, sw, sh, 0, 0, c.width, c.height);
     return { canvas: c, sx, sy, sw, sh };
+  }
+
+  function upsampleAlpha(alpha, sw, sh, dw, dh) {
+    if (sw === dw && sh === dh) return alpha;
+    const out = new Uint8Array(dw * dh);
+    for (let y = 0; y < dh; y++) {
+      const sy = ((y + 0.5) * sh) / dh - 0.5;
+      const y0 = Math.max(0, Math.min(sh - 1, Math.floor(sy)));
+      const y1 = Math.min(sh - 1, y0 + 1);
+      const fy = Math.max(0, Math.min(1, sy - y0));
+      for (let x = 0; x < dw; x++) {
+        const sx = ((x + 0.5) * sw) / dw - 0.5;
+        const x0 = Math.max(0, Math.min(sw - 1, Math.floor(sx)));
+        const x1 = Math.min(sw - 1, x0 + 1);
+        const fx = Math.max(0, Math.min(1, sx - x0));
+        const a =
+          alpha[y0 * sw + x0] * (1 - fx) * (1 - fy) +
+          alpha[y0 * sw + x1] * fx * (1 - fy) +
+          alpha[y1 * sw + x0] * (1 - fx) * fy +
+          alpha[y1 * sw + x1] * fx * fy;
+        out[y * dw + x] = a;
+      }
+    }
+    return out;
   }
 
   function maskFromAlpha(canvas) {
@@ -577,6 +607,7 @@ window.Cutout = (function () {
 
   async function extract(image, scribbleCanvas, opts) {
     const onProgress = opts && opts.onProgress;
+    const maxSide = (opts && opts.maxSide) || 2048;
     const nw = image.naturalWidth || image.width;
     const nh = image.naturalHeight || image.height;
     const work = Math.min(640, Math.max(nw, nh));
@@ -593,53 +624,60 @@ window.Cutout = (function () {
     const loose = bboxOf(scribble, w, h, pad);
     loose.sw = w;
     loose.sh = h;
-    const crop = cropCanvas(image, loose, nw, nh);
+    const crop = cropCanvas(image, loose, nw, nh, maxSide);
     const cw = crop.canvas.width;
     const ch = crop.canvas.height;
+    const loScale = Math.min(1, 640 / Math.max(cw, ch, 1));
+    const lw = Math.max(2, Math.round(cw * loScale));
+    const lh = Math.max(2, Math.round(ch * loScale));
+    const loCanvas = (lw === cw && lh === ch) ? crop.canvas : canvasFrom(crop.canvas, lw, lh);
     const workScribble = canvasFrom(scribbleCanvas, w, h);
     const mapped = document.createElement("canvas");
-    mapped.width = cw;
-    mapped.height = ch;
+    mapped.width = lw;
+    mapped.height = lh;
     mapped.getContext("2d").drawImage(
       workScribble,
       loose.minX, loose.minY, loose.maxX - loose.minX + 1, loose.maxY - loose.minY + 1,
-      0, 0, cw, ch
+      0, 0, lw, lh
     );
-    const scribCrop = readScribble(mapped, cw, ch);
+    const scribCrop = readScribble(mapped, lw, lh);
 
     let mask = null;
     let score = 0;
     try {
       if (onProgress) onProgress("Снимаю фон, как в стикерах…");
-      mask = await bgMask(crop.canvas, scribCrop, cw, ch, onProgress);
-      score = scoreMask(mask, scribCrop, cw, ch);
+      mask = await bgMask(loCanvas, scribCrop, lw, lh, onProgress);
+      score = scoreMask(mask, scribCrop, lw, lh);
     } catch (e) {
       mask = null;
     }
     try {
-      const nn = await nnMask(crop.canvas, scribCrop, cw, ch);
-      const sc = scoreMask(nn, scribCrop, cw, ch);
+      const nn = await nnMask(loCanvas, scribCrop, lw, lh);
+      const sc = scoreMask(nn, scribCrop, lw, lh);
       if (!mask || sc > score) { mask = nn; score = sc; }
     } catch (e) {}
     try {
-      const srcData = crop.canvas.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, cw, ch).data;
-      const geo = geodesicMask(srcData, scribCrop, cw, ch);
-      const sc = scoreMask(geo, scribCrop, cw, ch);
+      const srcData = loCanvas.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, lw, lh).data;
+      const geo = geodesicMask(srcData, scribCrop, lw, lh);
+      const sc = scoreMask(geo, scribCrop, lw, lh);
       if (!mask || sc > score) mask = geo;
     } catch (e) {
       if (!mask) throw e;
     }
 
-    const cut = applyAlpha(crop.canvas, mask, cw, ch);
+    const cut = applyAlpha(crop.canvas, mask, lw, lh);
     const blob = await new Promise((res) => cut.toBlob(res, "image/png"));
     return { blob, width: cut.width, height: cut.height, rgb: crop.canvas, cut };
   }
 
-  function applyAlpha(image, mask, w, h) {
+  function applyAlpha(image, mask, mw, mh) {
+    const w = image.width || image.naturalWidth;
+    const h = image.height || image.naturalHeight;
+    const alphaSmall = feather(mask, mw, mh, 2);
+    const alpha = upsampleAlpha(alphaSmall, mw, mh, w, h);
     const out = canvasFrom(image, w, h);
     const ctx = out.getContext("2d");
     const img = ctx.getImageData(0, 0, w, h);
-    const alpha = feather(mask, w, h, 2);
     for (let i = 0; i < w * h; i++) img.data[i * 4 + 3] = alpha[i];
     ctx.putImageData(img, 0, 0);
     return out;

@@ -1,9 +1,9 @@
 (function () {
   "use strict";
 
-  const VER = "9";
+  const VER = "10";
   const SIZES = [
-    [20, 30], [30, 40], [40, 50], [50, 70], [60, 80],
+    [20, 30], [30, 40], [40, 50], [50, 50], [50, 70], [60, 80],
   ];
   const AMOUNTS = [
     { id: "full", label: "полный тюбик" },
@@ -56,6 +56,84 @@
 
   function current() {
     return state.projects.find((p) => p.id === state.activeId) || null;
+  }
+
+  function canvasLongPx(widthCm, heightCm) {
+    const longCm = Math.max(widthCm || 40, heightCm || 50);
+    return Math.round(Math.min(2560, Math.max(1800, longCm * 48)));
+  }
+
+  function projectZoom(p) {
+    if (p.zoom && p.zoom.kind) return p.zoom;
+    if (p.zoomCell) return { kind: "cell", col: p.zoomCell.col, row: p.zoomCell.row };
+    return { kind: "full", col: 0, row: 0 };
+  }
+
+  function setProjectZoom(p, zoom) {
+    p.zoom = zoom || { kind: "full", col: 0, row: 0 };
+    p.zoomCell = p.zoom.kind === "cell" ? { col: p.zoom.col, row: p.zoom.row } : null;
+    if (easel) easel.setView(p.zoom);
+    if (window.HolstCast) HolstCast.poke();
+  }
+
+  function zoomFromTap(p, col, row) {
+    const z = projectZoom(p);
+    const n = p.gridN || 4;
+    if (!z.kind || z.kind === "full") {
+      const b = Easel.blockOf(col, row, n);
+      return { kind: "quad", col: b.col, row: b.row };
+    }
+    if (z.kind === "quad") return { kind: "cell", col, row };
+    return { kind: "full", col, row };
+  }
+
+  function zoomKindTarget(p, kind) {
+    const n = p.gridN || 4;
+    const z = projectZoom(p);
+    let col = z.col || 0;
+    let row = z.row || 0;
+    if (easel && easel.selectedId) {
+      const s = easel.stickers.find((x) => x.id === easel.selectedId);
+      if (s) {
+        const c = easel.cellOfSticker(s);
+        col = c.col;
+        row = c.row;
+      }
+    }
+    if (kind === "full") return { kind: "full", col, row };
+    if (kind === "quad") {
+      const b = Easel.blockOf(col, row, n);
+      return { kind: "quad", col: b.col, row: b.row };
+    }
+    return { kind: "cell", col, row };
+  }
+
+  function zoomBarHtml(p) {
+    const k = projectZoom(p).kind || "full";
+    return `
+      <div class="zoom-bar" id="zoom-bar">
+        <button type="button" class="btn ghost row ${k === "full" ? "on" : ""}" data-zoom="full">весь холст</button>
+        <button type="button" class="btn ghost row ${k === "quad" ? "on" : ""}" data-zoom="quad">4 клетки</button>
+        <button type="button" class="btn ghost row ${k === "cell" ? "on" : ""}" data-zoom="cell">1 клетка</button>
+      </div>`;
+  }
+
+  function cropExport(src, p) {
+    if (!src) return null;
+    const rect = Easel.viewRect(projectZoom(p), p.gridN || 4);
+    const c = document.createElement("canvas");
+    c.width = Math.max(2, Math.round(src.width * rect.w));
+    c.height = Math.max(2, Math.round(src.height * rect.h));
+    const ctx = c.getContext("2d");
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(
+      src,
+      rect.x * src.width, rect.y * src.height,
+      src.width * rect.w, src.height * rect.h,
+      0, 0, c.width, c.height
+    );
+    return c;
   }
 
   function save() {
@@ -126,12 +204,15 @@
         URL.revokeObjectURL(tmp);
       }
     }
-    const scale = Math.min(1, 1600 / Math.max(w, 1));
+    const scale = Math.min(1, 3200 / Math.max(w, 1));
     canvas.width = Math.max(1, Math.round(w * scale));
     canvas.height = Math.max(1, Math.round(h * scale));
-    paint(canvas.getContext("2d"), canvas.width, canvas.height);
+    const ctx = canvas.getContext("2d");
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    paint(ctx, canvas.width, canvas.height);
     if (bmp && bmp.close) bmp.close();
-    const blob = await new Promise((res) => canvas.toBlob((b) => res(b || file), "image/jpeg", 0.88));
+    const blob = await new Promise((res) => canvas.toBlob((b) => res(b || file), "image/jpeg", 0.92));
     return blob;
   }
 
@@ -240,7 +321,9 @@
   }
 
   function render() {
+    if (watchCode()) return renderWatch(watchCode());
     app.classList.toggle("camera-mode", state.tab === "camera");
+    app.classList.remove("watch-mode");
     modal.hidden = true;
     modal.innerHTML = "";
     renderNav();
@@ -321,6 +404,10 @@
         4. Дальше запускай иконку «Холст» — без компьютера и можно без интернета.</p>
       </div>
       <div class="card">
+        <h3>Другой экран</h3>
+        <p class="muted">На холсте или в камере нажми «Показать на телевизоре». Открой код на компьютере или Smart TV в браузере — оба в одном Wi‑Fi. Интернет нужен на пару секунд, дальше картина идёт с телефона. Если не находится: транслируй экран телефона как обычно (AirPlay, Google Cast, Smart View) или HDMI.</p>
+      </div>
+      <div class="card">
         <h3>Как задать цвет краски</h3>
         <p class="muted"><b>Лучше название с тюбика.</b> Пиши «ультрамарин», «охра светлая», «белила титановые». Цвет появится сразу — подкрути, если мазок в жизни чуть другой.</p>
         <p class="muted"><b>Фото — запасной путь.</b> Не снимай этикетку. Выдави мазок на белую бумагу у окна, днём, без блика, ткни в центр.</p>
@@ -395,6 +482,7 @@
         analysis: null,
         stepIndex: 0,
         zoomCell: null,
+        zoom: { kind: "full", col: 0, row: 0 },
         createdAt: Date.now(),
       };
       state.projects.unshift(project);
@@ -621,6 +709,8 @@
       <div class="field">Вырезанные предметы — нажми, чтобы положить на холст</div>
       <div class="film" id="cut-film"></div>
       <div class="easel-wrap" id="easel-wrap"><canvas id="easel"></canvas></div>
+      ${zoomBarHtml(p)}
+      <p class="tiny" style="margin:0 0 10px">Коснись клетки — сначала 4 квадрата, ещё раз — один. Так удобнее выкладывать и смотреть детали.</p>
       <div class="row wrap" style="margin-top:10px">
         <button type="button" class="btn ghost row" data-nudge="scale-up">крупнее</button>
         <button type="button" class="btn ghost row" data-nudge="scale-down">мельче</button>
@@ -631,6 +721,7 @@
       </div>
       <button type="button" class="btn danger" id="del-sticker" style="margin-top:10px">Удалить объект с холста</button>
       <p class="tiny" id="del-hint" style="margin:8px 0 10px">Зажми предмет — слой вперёд или назад. Нажми, потом «Удалить». Размер меняется равномерно.</p>
+      <button type="button" class="btn ghost" id="cast-screen" style="margin-top:10px">Показать на телевизоре / компьютере</button>
       <label class="field">Сетка
         <select id="grid-n">
           ${[3, 4, 5, 6, 8].map((n) => `<option value="${n}" ${p.gridN === n ? "selected" : ""}>${n}×${n}</option>`).join("")}
@@ -660,6 +751,20 @@
       if (easel) { easel.gridN = p.gridN; easel.draw(); }
       save();
     };
+    const zoomBar = document.getElementById("zoom-bar");
+    if (zoomBar) {
+      zoomBar.querySelectorAll("[data-zoom]").forEach((b) => {
+        b.onclick = () => {
+          setProjectZoom(p, zoomKindTarget(p, b.dataset.zoom));
+          save();
+          zoomBar.querySelectorAll("[data-zoom]").forEach((x) => {
+            x.classList.toggle("on", x.dataset.zoom === projectZoom(p).kind);
+          });
+        };
+      });
+    }
+    const castBtn = document.getElementById("cast-screen");
+    if (castBtn) castBtn.onclick = () => openCastSheet(p);
     app.querySelectorAll("[data-nudge]").forEach((b) => {
       b.onclick = () => easel && easel.nudge(b.dataset.nudge);
     });
@@ -810,6 +915,118 @@
     };
   }
 
+  function watchCode() {
+    const m = String(location.hash || "").match(/^#watch\/([A-Za-z0-9]+)/i);
+    return m ? m[1].toUpperCase() : "";
+  }
+
+  async function openCastSheet(p) {
+    modal.hidden = false;
+    modal.innerHTML = `
+      <div class="sheet" role="dialog" aria-label="Другой экран">
+        <div class="grab"></div>
+        <h3>Другой экран</h3>
+        <p class="tiny" id="cast-status">Собираю подключение… Оба устройства в одном Wi‑Fi. Интернет нужен только чтобы найти друг друга.</p>
+        <div id="cast-body" class="stack"></div>
+      </div>
+    `;
+    modal.onclick = (e) => {
+      if (e.target === modal) closeModal();
+    };
+    const status = document.getElementById("cast-status");
+    const body = document.getElementById("cast-body");
+    try {
+      const session = await HolstCast.host({
+        getFrame() {
+          const cur = current() || p;
+          if (exportShot) return cropExport(exportShot, cur);
+          if (easel && easel.canvas && easel.canvas.isConnected) {
+            return cropExport(easel.exportCanvas(canvasLongPx(cur.widthCm, cur.heightCm)), cur);
+          }
+          return null;
+        },
+        onViewers(n) {
+          const el = document.getElementById("cast-viewers");
+          if (el) el.textContent = n ? "Смотрят: " + n : "Жду второй экран…";
+        },
+      });
+      if (!document.getElementById("cast-body")) return;
+      status.textContent = "Открой ссылку на компьютере или телевизоре. Картина и приближение идут с телефона.";
+      body.innerHTML = `
+        ${session.qr ? `<img class="cast-qr" alt="QR" src="${esc(session.qr)}" />` : ""}
+        <div class="watch-code">${esc(session.code)}</div>
+        <p class="tiny" id="cast-viewers">Жду второй экран…</p>
+        <p class="tiny">${esc(session.url)}</p>
+        <button type="button" class="btn" id="cast-copy">Скопировать ссылку</button>
+        <button type="button" class="btn ghost" id="cast-stop">Отключить</button>
+        <p class="tiny">Запасной путь: транслируй экран телефона на телевизор (AirPlay / Cast / Smart View) или кабель HDMI.</p>
+      `;
+      document.getElementById("cast-copy").onclick = async (e) => {
+        e.stopPropagation();
+        try {
+          await navigator.clipboard.writeText(session.url);
+          document.getElementById("cast-copy").textContent = "Скопировано";
+        } catch (err) {
+          prompt("Скопируй ссылку", session.url);
+        }
+      };
+      document.getElementById("cast-stop").onclick = (e) => {
+        e.stopPropagation();
+        HolstCast.stopHost();
+        closeModal();
+      };
+      HolstCast.poke();
+    } catch (err) {
+      status.textContent = "Прямое подключение не вышло. Транслируй экран телефона на телевизор или открой картину по HDMI.";
+      body.innerHTML = `<button type="button" class="btn ghost" id="cast-stop">Закрыть</button>`;
+      const b = document.getElementById("cast-stop");
+      if (b) b.onclick = (e) => { e.stopPropagation(); closeModal(); };
+    }
+  }
+
+  function renderWatch(code) {
+    nav.hidden = true;
+    app.classList.add("watch-mode");
+    app.classList.remove("camera-mode");
+    renderTop("Экран", "картина с телефона", true);
+    const backBtn = document.getElementById("go-back");
+    if (backBtn) {
+      backBtn.onclick = () => {
+        HolstCast.stopJoin();
+        location.hash = "";
+        render();
+      };
+    }
+    app.innerHTML = `
+      <div class="watch-root">
+        <img id="watch-img" alt="Картина" />
+        <p class="tiny" id="watch-status">Ищу телефон по коду ${esc(code)}… Один Wi‑Fi.</p>
+        <button type="button" class="btn ghost" id="watch-back">В мастерскую</button>
+      </div>
+    `;
+    const img = document.getElementById("watch-img");
+    const st = document.getElementById("watch-status");
+    let prev = "";
+    HolstCast.join(code, (data) => {
+      const blob = data instanceof Blob ? data : new Blob([data], { type: "image/jpeg" });
+      const url = URL.createObjectURL(blob);
+      img.onload = () => { if (prev) URL.revokeObjectURL(prev); };
+      img.src = url;
+      prev = url;
+      img.classList.add("on");
+      st.textContent = "Картина с телефона";
+    }, () => {
+      st.textContent = "Связались. Жду картину…";
+    }).catch(() => {
+      st.textContent = "Не нашёл телефон. Проверь Wi‑Fi и что на телефоне открыт «Другой экран».";
+    });
+    document.getElementById("watch-back").onclick = () => {
+      HolstCast.stopJoin();
+      location.hash = "";
+      render();
+    };
+  }
+
   async function mountEasel(p) {
     const canvas = document.getElementById("easel");
     if (!canvas) return;
@@ -817,11 +1034,22 @@
       onChange(stickers) {
         p.stickers = stickers;
         p.analysis = null;
+        exportShot = null;
         save();
       },
       onSelect() {},
       onLongPress(sticker) {
         showDepthSheet(sticker);
+      },
+      onGridTap(cell) {
+        setProjectZoom(p, zoomFromTap(p, cell.col, cell.row));
+        save();
+        const bar = document.getElementById("zoom-bar");
+        if (bar) {
+          bar.querySelectorAll("[data-zoom]").forEach((x) => {
+            x.classList.toggle("on", x.dataset.zoom === projectZoom(p).kind);
+          });
+        }
       },
     });
     easel.setScene({
@@ -830,6 +1058,7 @@
       gridN: p.gridN,
       widthCm: p.widthCm,
       heightCm: p.heightCm,
+      view: projectZoom(p),
     });
     for (const s of p.stickers) {
       const url = await fileUrl("cut:" + s.imageId);
@@ -1104,16 +1333,16 @@
       btn.disabled = true;
       msg.textContent = "Снимаю фон с предмета в мазке…";
       try {
-        const seen = document.createElement("canvas");
-        seen.width = cutImg.naturalWidth;
-        seen.height = cutImg.naturalHeight;
-        seen.getContext("2d").drawImage(base, 0, 0, seen.width, seen.height);
         const tmp = document.createElement("canvas");
-        tmp.width = seen.width;
-        tmp.height = seen.height;
-        tmp.getContext("2d").drawImage(draw, 0, 0, tmp.width, tmp.height);
-        const out = await Cutout.extract(seen, tmp, {
+        tmp.width = cutImg.naturalWidth;
+        tmp.height = cutImg.naturalHeight;
+        const tctx = tmp.getContext("2d");
+        tctx.imageSmoothingEnabled = true;
+        tctx.imageSmoothingQuality = "high";
+        tctx.drawImage(draw, 0, 0, tmp.width, tmp.height);
+        const out = await Cutout.extract(cutImg, tmp, {
           onProgress: (s) => { msg.textContent = s; },
+          maxSide: canvasLongPx(p.widthCm, p.heightCm),
         });
         if (!out.rgb || !out.cut) throw new Error("Не вышло собрать вырезку.");
         enterRefine(out);
@@ -1184,6 +1413,7 @@
       b.onclick = () => {
         p.stepIndex = Number(b.dataset.camStep);
         p.zoomCell = null;
+        p.zoom = { kind: "full", col: 0, row: 0 };
         state.tab = "camera";
         save();
         render();
@@ -1207,7 +1437,20 @@
       if (url) tmp.setImage(s.imageId, await loadImage(url));
     }
     tmp.resize();
-    const shot = tmp.exportCanvas(720);
+    const hi = canvasLongPx(p.widthCm, p.heightCm);
+    const shot = tmp.exportCanvas(hi);
+    const small = document.createElement("canvas");
+    if (shot.width >= shot.height) {
+      small.width = 720;
+      small.height = Math.max(2, Math.round(720 * shot.height / shot.width));
+    } else {
+      small.height = 720;
+      small.width = Math.max(2, Math.round(720 * shot.width / shot.height));
+    }
+    const sctx = small.getContext("2d");
+    sctx.imageSmoothingEnabled = true;
+    sctx.imageSmoothingQuality = "high";
+    sctx.drawImage(shot, 0, 0, small.width, small.height);
     const stickers = [];
     for (const s of p.stickers) {
       const url = await fileUrl("cut:" + s.imageId);
@@ -1218,7 +1461,7 @@
     wrap.remove();
     exportShot = shot;
     return StudioAnalyze.analyze({
-      canvas: shot,
+      canvas: small,
       paints: p.paints,
       stickers,
       gridN: p.gridN,
@@ -1248,7 +1491,9 @@
           <label class="field">Этап
             <select id="cam-step"></select>
           </label>
+          ${zoomBarHtml(p)}
           <p class="tiny" id="zoom-hint"></p>
+          <button type="button" class="btn ghost" id="cast-screen">Другой экран</button>
           <div id="cam-mix"></div>
           <p class="tiny" id="cam-err" style="color:var(--bad)"></p>
         </div>
@@ -1288,14 +1533,25 @@
       ov.height = Math.round(fit.fh * dpr);
       paintCam();
     }
+    function zoomLabel() {
+      const z = projectZoom(p);
+      if (z.kind === "cell") {
+        return `Клетка ${StudioAnalyze.cellLabel(z.col, z.row, p.gridN)} · один квадрат`;
+      }
+      if (z.kind === "quad") {
+        return `4 клетки · ${StudioAnalyze.cellLabel(z.col, z.row, p.gridN)} и рядом`;
+      }
+      return `${p.widthCm}×${p.heightCm} см · совмести рамку с холстом`;
+    }
     function paintCam() {
       const step = steps[p.stepIndex || 0];
-      document.getElementById("cam-label").textContent = p.zoomCell
-        ? `Клетка ${StudioAnalyze.cellLabel(p.zoomCell.col, p.zoomCell.row, p.gridN)} · ближе к холсту`
-        : `${p.widthCm}×${p.heightCm} см · совмести рамку с холстом`;
-      document.getElementById("zoom-hint").textContent = p.zoomCell
-        ? "Рамка = один квадрат. Коснись картины ещё раз, чтобы снова видеть весь холст."
-        : "Полупрозрачная картина лежит на реальном холсте. Сетка почти не мешает. Коснись клетки, чтобы приблизить.";
+      const z = projectZoom(p);
+      document.getElementById("cam-label").textContent = zoomLabel();
+      document.getElementById("zoom-hint").textContent = z.kind === "full"
+        ? "Коснись клетки: сначала 4 квадрата, потом один. Ещё раз — весь холст."
+        : z.kind === "quad"
+          ? "Четыре клетки на весь кадр. Коснись одной — ещё ближе, или кнопку «весь холст»."
+          : "Один квадрат. Коснись ещё раз, чтобы вернуть весь холст.";
       const hi = (step && step.cells) || [];
       const ppm = StudioCam.pxPerMm(state.calibrate);
       const mix = document.getElementById("cam-mix");
@@ -1312,28 +1568,44 @@
         exportCanvas: exportShot,
         opacity: state.overlayOpacity || 0.28,
         gridN: p.gridN,
-        zoomCell: p.zoomCell,
-        highlightCells: p.zoomCell ? [] : hi,
+        zoom: z,
+        highlightCells: z.kind === "full" ? hi : [],
       });
+      const bar = document.getElementById("zoom-bar");
+      if (bar) {
+        bar.querySelectorAll("[data-zoom]").forEach((x) => {
+          x.classList.toggle("on", x.dataset.zoom === z.kind);
+        });
+      }
     }
     ov.onclick = (e) => {
-      if (p.zoomCell) {
-        p.zoomCell = null;
-        save();
-        paintCam();
-        return;
-      }
       const r = ov.getBoundingClientRect();
       const n = p.gridN || 4;
-      const col = Math.min(n - 1, Math.max(0, Math.floor(((e.clientX - r.left) / r.width) * n)));
-      const row = Math.min(n - 1, Math.max(0, Math.floor(((e.clientY - r.top) / r.height) * n)));
-      p.zoomCell = { col, row };
+      const z = projectZoom(p);
+      const rect = Easel.viewRect(z, n);
+      const u = (e.clientX - r.left) / Math.max(1, r.width);
+      const v = (e.clientY - r.top) / Math.max(1, r.height);
+      const col = Math.min(n - 1, Math.max(0, Math.floor((rect.x + u * rect.w) * n)));
+      const row = Math.min(n - 1, Math.max(0, Math.floor((rect.y + v * rect.h) * n)));
+      setProjectZoom(p, zoomFromTap(p, col, row));
       save();
       paintCam();
     };
+    const zoomBar = document.getElementById("zoom-bar");
+    if (zoomBar) {
+      zoomBar.querySelectorAll("[data-zoom]").forEach((b) => {
+        b.onclick = () => {
+          setProjectZoom(p, zoomKindTarget(p, b.dataset.zoom));
+          save();
+          paintCam();
+        };
+      });
+    }
+    const castBtn = document.getElementById("cast-screen");
+    if (castBtn) castBtn.onclick = () => openCastSheet(p);
     sel.onchange = () => {
       p.stepIndex = Number(sel.value);
-      p.zoomCell = null;
+      setProjectZoom(p, { kind: "full", col: 0, row: 0 });
       save();
       paintCam();
     };
@@ -1391,6 +1663,7 @@
 
   HolstDB.open().catch(() => {});
   render();
+  window.addEventListener("hashchange", () => render());
   const boot = Promise.race([
     HolstDB.loadState(),
     new Promise((res) => setTimeout(() => res(null), 1200)),
@@ -1398,7 +1671,7 @@
   boot.then((s) => {
     if (s && s.projects) {
       state = Object.assign(emptyState(), s);
-      render();
+      if (!watchCode()) render();
     }
   }).catch(() => {});
 })();

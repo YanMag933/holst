@@ -113,7 +113,60 @@ img { max-width: 100%; display: block; }
   padding: 0 18px calc(22px + var(--nav) + var(--safe-b));
   -webkit-overflow-scrolling: touch;
 }
-.content.camera-mode { padding: 0; overflow: hidden; }
+.content.camera-mode,
+.content.watch-mode { padding: 0; overflow: hidden; }
+
+.zoom-bar {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 8px 0 4px;
+}
+.zoom-bar .btn {
+  flex: 1;
+  min-width: 0;
+  padding: 0 8px;
+  font-size: 0.78rem;
+}
+.zoom-bar .btn.on {
+  border-color: var(--gold);
+  color: var(--gold);
+  background: rgba(212,181,106,0.12);
+}
+
+.cast-qr {
+  width: 180px;
+  height: 180px;
+  margin: 0 auto;
+  border-radius: 14px;
+  background: #f2e6d2;
+}
+.watch-code {
+  font-family: var(--serif);
+  font-size: 1.8rem;
+  letter-spacing: 0.22em;
+  text-align: center;
+  color: var(--linen);
+}
+.watch-root {
+  min-height: calc(100dvh - 80px);
+  display: grid;
+  place-items: center;
+  padding: 12px 16px calc(24px + var(--safe-b));
+  gap: 12px;
+}
+.watch-root img {
+  width: min(96vw, 96dvh);
+  height: auto;
+  max-height: 78dvh;
+  object-fit: contain;
+  background: #1a1510;
+  border-radius: 8px;
+  opacity: 0.35;
+}
+.watch-root img.on { opacity: 1; }
+
+.cam-ui.compact .zoom-bar { grid-column: 1 / -1; }
 
 .bottom-nav {
   position: fixed;
