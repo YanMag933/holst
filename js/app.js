@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VER = "13";
+  const VER = "14";
   const SIZES = [
     [20, 30], [30, 40], [40, 50], [50, 50], [50, 70], [60, 80],
   ];
@@ -1806,11 +1806,13 @@
     const prevBtn = document.getElementById("cam-prev");
     const nextBtn = document.getElementById("cam-next");
     const stepCount = document.getElementById("cam-step-count");
-    sel.innerHTML = steps.map((s, i) => `<option value="${i}" ${i === (p.stepIndex || 0) ? "selected" : ""}>${esc(s.title)}</option>`).join("");
+    if (sel) {
+      sel.innerHTML = steps.map((s, i) => `<option value="${i}" ${i === (p.stepIndex || 0) ? "selected" : ""}>${esc(s.title)}</option>`).join("");
+    }
     function setSheet(open) {
-      sheet.classList.toggle("open", open);
-      toggle.setAttribute("aria-expanded", open ? "true" : "false");
-      scrim.hidden = !open;
+      if (sheet) sheet.classList.toggle("open", open);
+      if (toggle) toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      if (scrim) scrim.hidden = !open;
     }
     function goStep(delta) {
       if (!steps.length) return;
@@ -1818,13 +1820,13 @@
       const next = Math.max(0, Math.min(steps.length - 1, cur + delta));
       if (next === cur) return;
       p.stepIndex = next;
-      sel.value = String(next);
+      if (sel) sel.value = String(next);
       setProjectZoom(p, { kind: "full", col: 0, row: 0 });
       save();
       paintCam();
     }
-    toggle.onclick = () => setSheet(!sheet.classList.contains("open"));
-    scrim.onclick = () => setSheet(false);
+    if (toggle) toggle.onclick = () => setSheet(!sheet.classList.contains("open"));
+    if (scrim) scrim.onclick = () => setSheet(false);
     if (prevBtn) prevBtn.onclick = () => goStep(-1);
     if (nextBtn) nextBtn.onclick = () => goStep(1);
     function layout() {
@@ -1876,14 +1878,15 @@
           handleSw.hidden = true;
         }
       }
-      const idx = p.stepIndex || 0;
+      const idx = Math.max(0, Math.min(Math.max(0, steps.length - 1), p.stepIndex || 0));
       if (stepCount) stepCount.textContent = steps.length ? (idx + 1) + " / " + steps.length : "";
       if (prevBtn) prevBtn.disabled = idx <= 0;
       if (nextBtn) {
         nextBtn.disabled = idx >= steps.length - 1;
         nextBtn.textContent = idx >= steps.length - 1 ? "Готово" : "Дальше";
       }
-      mix.innerHTML = step ? `
+      if (sel && String(sel.value) !== String(idx)) sel.value = String(idx);
+      if (mix) mix.innerHTML = step ? `
         <div class="tiny" style="color:var(--linen);margin:0 0 4px">${esc(step.title)}</div>
         ${step.teacher ? `<p class="tiny">${esc(step.teacher)}</p>` : ""}
         ${sh ? `<div class="row">
@@ -1906,11 +1909,6 @@
           x.classList.toggle("on", x.dataset.zoom === z.kind);
         });
       }
-      const idx = Math.max(0, Math.min(steps.length - 1, p.stepIndex || 0));
-      if (stepCount) stepCount.textContent = steps.length ? (idx + 1) + " из " + steps.length : "";
-      if (prevBtn) prevBtn.disabled = idx <= 0;
-      if (nextBtn) nextBtn.disabled = idx >= steps.length - 1;
-      if (sel && String(sel.value) !== String(idx)) sel.value = String(idx);
     }
     ov.onclick = (e) => {
       const r = ov.getBoundingClientRect();
@@ -1937,12 +1935,14 @@
     }
     const castBtn = document.getElementById("cast-screen");
     if (castBtn) castBtn.onclick = () => openCastSheet(p);
-    sel.onchange = () => {
-      p.stepIndex = Number(sel.value);
-      setProjectZoom(p, { kind: "full", col: 0, row: 0 });
-      save();
-      paintCam();
-    };
+    if (sel) {
+      sel.onchange = () => {
+        p.stepIndex = Number(sel.value);
+        setProjectZoom(p, { kind: "full", col: 0, row: 0 });
+        save();
+        paintCam();
+      };
+    }
     document.getElementById("op").oninput = (e) => {
       state.overlayOpacity = Number(e.target.value) / 100;
       save();
