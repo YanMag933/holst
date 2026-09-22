@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VER = "14";
+  const VER = "15";
   const SIZES = [
     [20, 30], [30, 40], [40, 50], [50, 50], [50, 70], [60, 80],
   ];
@@ -507,7 +507,7 @@
       </div>
       <div class="card">
         <h3>Как мешать</h3>
-        <p class="muted">Мешай на палитре ножом или кистью до однородного пятна, не на холсте. Проверяй смесь рядом с референсом. Тень: без белил или с каплей — белила делают цвет молочным. Свет: белила клади последними и мало. Большие массы чуть жиже, форму гуще, блик совсем густой маленькой кистью. Масло: снизу тощее (растворитель), сверху жирнее (масло из тюбика, потом ещё масла) — иначе верхний слой треснет. Акварель наоборот: от светлого к тёмному, свет — это бумага. Не три сырое пятно. Гуашь светлеет при высыхании — светлые смеси готовь с запасом.</p>
+        <p class="muted">Мешай на палитре, не на холсте. Сначала цвет (красный, жёлтый, синий), потом сила цвета: если слишком ядовитый — капля противоположного (к зелёному красный, к оранжевому синий). Светлоту правят в конце: белила по капле, темнение — умброй или синим, не сразу чёрной. Тень без белил, иначе молоко. Свет: белила последними и мало. Больше трёх красок в одной кучке — почти всегда грязь. Масло: снизу жиже, сверху жирнее. Акварель наоборот — от светлого к тёмному, свет это бумага.</p>
       </div>
       <div class="card">
         <h3>Как задать цвет краски</h3>
@@ -1588,7 +1588,7 @@
       return;
     }
     app.innerHTML = `<div class="empty" id="an-wait">Смотрю каждый предмет и твои краски…</div>`;
-    if (!p.analysis || !p.analysis.mixLesson || !Array.isArray(p.analysis.objects)) {
+    if (!p.analysis || p.analysis.guideVer !== 2 || !p.analysis.mixLesson || !Array.isArray(p.analysis.objects)) {
       p.analysis = await runAnalysis(p);
       save();
     }
@@ -1615,6 +1615,7 @@
           <li>Каждый предмет: тень → цвет → свет</li>
           <li>Края и блики в конце</li>
         </ol>
+        <p class="tiny" style="margin-top:12px">На палитре: сначала цвет, потом сила цвета, белила — последними. Тень без белил.</p>
       </div>
       ${objects.length ? `
       <div class="card roster">
@@ -1652,7 +1653,9 @@
                 </div>
               </div>
               ${blobMix(sh.mix.parts || [])}
-              <p class="muted">${esc(sh.mix.text)}</p>
+              ${(sh.mix.steps && sh.mix.steps.length)
+                ? `<ol class="mix-steps">${sh.mix.steps.map((t) => `<li>${esc(t)}</li>`).join("")}</ol>`
+                : `<p class="muted">${esc(sh.mix.text || "")}</p>`}
               <p class="tiny">${esc(sh.how || "")}</p>
               <div class="stroke-preview" title="реальный размер мазка" style="--stroke:${(sh.strokeMm || 8) * ppm}px;background:${esc(sh.mix.hex)}"></div>
               <p class="tiny" style="text-align:center">Поднеси палитру к кружку — это реальный размер мазка (~${sh.strokeMm} мм).</p>
@@ -1889,6 +1892,7 @@
       if (mix) mix.innerHTML = step ? `
         <div class="tiny" style="color:var(--linen);margin:0 0 4px">${esc(step.title)}</div>
         ${step.teacher ? `<p class="tiny">${esc(step.teacher)}</p>` : ""}
+        ${sh && sh.mix && sh.mix.steps && sh.mix.steps[0] ? `<p class="tiny">${esc(sh.mix.steps[0])}</p>` : ""}
         ${sh ? `<div class="row">
           <span class="swatch" style="background:${esc(sh.mix.hex)}"></span>
           <span class="tiny">${esc(sh.label)}${step.objectName ? " · " + step.objectName : ""}</span>

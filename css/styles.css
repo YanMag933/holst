@@ -646,6 +646,15 @@ input[type="range"] { width: 100%; accent-color: var(--gold); }
 }
 .atelier li { margin: 2px 0; }
 
+.mix-steps {
+  margin: 8px 0 0;
+  padding: 0 0 0 18px;
+  color: var(--linen);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+.mix-steps li { margin: 4px 0; }
+
 .object-row {
   display: grid;
   grid-template-columns: 14px 1fr auto;

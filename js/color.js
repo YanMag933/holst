@@ -189,25 +189,52 @@ window.ColorKit = (function () {
     return "большая клякса";
   }
 
-  function recipeText(items) {
-    /* items: [{name, parts, strength}] */
-    if (!items.length) return "Цвет не собран.";
-    const sorted = items.slice().sort((a, b) => b.parts - a.parts);
-    const chunks = sorted.map((it) => {
-      const how = blobWord(it.parts, it.strength);
-      if (it.strength === "high") {
-        return `${how} «${it.name}» (сильный пигмент — вводи по чуть-чуть)`;
-      }
-      return `${how} «${it.name}»`;
-    });
-    let text = "На палитре: " + chunks.join(", ") + ".";
-    if (sorted.length > 1) {
-      const base = sorted[0];
-      text += ` Сначала выложи ${blobWord(base.parts, base.strength)} «${base.name}», затем вмешивай остальные, пока мазок не совпадёт с кружком на экране.`;
-    } else {
-      text += " Можно почти без смешения — это близко к цвету из тюбика.";
+  function paintKind(it) {
+    const name = String(it.name || "");
+    if (/белил|white/i.test(name) || isWhiteish(it.hex)) return "white";
+    if (/сажа|чёрн|черн|black/i.test(name) || isBlackish(it.hex)) return "black";
+    return "chroma";
+  }
+
+  function recipeSteps(items) {
+    if (!items.length) return ["Цвет не собран — сначала добавь тюбики."];
+    const chroma = items.filter((it) => paintKind(it) === "chroma").sort((a, b) => b.parts - a.parts);
+    const white = items.filter((it) => paintKind(it) === "white");
+    const black = items.filter((it) => paintKind(it) === "black");
+    const steps = [];
+    if (!chroma.length && white.length && !black.length) {
+      steps.push("Это почти белила из тюбика. Если свет тёплый — капля охры, если холодный — капля ультрамарина.");
+      return steps;
     }
-    return text;
+    if (chroma.length === 1 && !white.length && !black.length) {
+      steps.push("Почти цвет из тюбика «" + chroma[0].name + "». Можно класть как есть.");
+      return steps;
+    }
+    let n = 1;
+    if (chroma[0]) {
+      steps.push(n + ". Выложи " + blobWord(chroma[0].parts, chroma[0].strength) + " «" + chroma[0].name + "» — это основа, с неё начинают, не с белил.");
+      n += 1;
+    }
+    chroma.slice(1).forEach((it) => {
+      const hint = it.strength === "high" ? " Сильный пигмент: вводи по капле." : "";
+      steps.push(n + ". Вмешивай «" + it.name + "» (" + blobWord(it.parts, it.strength) + "), пока оттенок не станет похож — жёлтее, краснее или синее." + hint);
+      n += 1;
+    });
+    if (black.length) {
+      steps.push(n + ". Темнить «" + black[0].name + "» совсем чуть-чуть. Чёрная быстро убивает цвет: лучше капля умбры, чем мазок сажи.");
+      n += 1;
+    }
+    if (white.length) {
+      steps.push(n + ". Белила — в самом конце, по капле. Если положить их раньше, смесь станет меловой и холодной.");
+      n += 1;
+    }
+    steps.push(n + ". Сверь мазок с кружком. Слишком ярко — капля «противоположного» (к зелёному красный, к оранжевому синий). Слишком светло — не сразу белила, сначала чуть основного цвета.");
+    return steps;
+  }
+
+  function recipeText(items) {
+    if (!items.length) return "Цвет не собран.";
+    return recipeSteps(items).join(" ");
   }
 
   function isWhiteish(hex) {
@@ -218,7 +245,7 @@ window.ColorKit = (function () {
     return luminance(hex) < 18;
   }
 
-  function bestMix(targetHex, paints) {
+  function bestMix(targetHex, paints, opts) {
     const targetLab = hexToLab(targetHex);
     const list = (paints || []).filter((p) => p && p.hex);
     if (!list.length) {
@@ -227,15 +254,20 @@ window.ColorKit = (function () {
         deltaE: 99,
         parts: [],
         text: "Нет красок в наличии — добавь тюбики в мастерскую.",
+        steps: ["Нет красок в наличии — добавь тюбики в мастерскую."],
         quality: "hard",
       };
     }
 
     let best = null;
+    const preferNoWhite = opts && opts.preferNoWhite;
 
     function consider(combo) {
       const hex = mixPaints(combo.map((c) => ({ hex: c.hex, weight: c.parts })));
-      const d = deltaE(targetLab, hexToLab(hex));
+      let d = deltaE(targetLab, hexToLab(hex));
+      if (preferNoWhite && combo.some((c) => /белил|white/i.test(c.name) || isWhiteish(c.hex))) {
+        d += 6;
+      }
       if (!best || d < best.deltaE) {
         const simplified = simplify(combo.map((c) => c.parts));
         const parts = combo.map((c, i) => ({
@@ -245,11 +277,13 @@ window.ColorKit = (function () {
           parts: simplified[i],
           strength: c.strength || "normal",
         })).filter((c) => c.parts > 0);
+        const steps = recipeSteps(parts);
         best = {
           hex,
           deltaE: d,
           parts,
-          text: recipeText(parts),
+          text: steps.join(" "),
+          steps,
           quality: d < 6 ? "ok" : d < 12 ? "good" : d < 20 ? "approx" : "hard",
         };
       }
