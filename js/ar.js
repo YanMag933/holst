@@ -371,6 +371,8 @@ window.HolstAR = (function () {
     let buf = null;
     let raf = 0;
     let running = false;
+    let texDirty = true;
+    let lastTexKey = "";
     const widthM = (opts.widthCm || 40) / 100;
     const heightM = (opts.heightCm || 50) / 100;
 
@@ -433,6 +435,28 @@ window.HolstAR = (function () {
 
     function uploadTexture(src) {
       if (!gl || !texture || !src) return;
+      const sw = src.width || src.naturalWidth || 0;
+      const sh = src.height || src.naturalHeight || 0;
+      if (!sw || !sh) return;
+      const maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE) || 4096;
+      let tw = sw;
+      let th = sh;
+      if (sw > maxTex || sh > maxTex) {
+        const sc = maxTex / Math.max(sw, sh);
+        tw = Math.max(1, Math.round(sw * sc));
+        th = Math.max(1, Math.round(sh * sc));
+      }
+      let upload = src;
+      if (tw !== sw || th !== sh) {
+        const c = document.createElement("canvas");
+        c.width = tw;
+        c.height = th;
+        const cx = c.getContext("2d");
+        cx.imageSmoothingEnabled = true;
+        cx.imageSmoothingQuality = "high";
+        cx.drawImage(src, 0, 0, tw, th);
+        upload = c;
+      }
       gl.bindTexture(gl.TEXTURE_2D, texture);
       gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 1);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -440,8 +464,10 @@ window.HolstAR = (function () {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       try {
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, upload);
       } catch (e) {}
+      texDirty = false;
+      lastTexKey = sw + "x" + sh;
     }
 
     function mul4(a, b) {
@@ -481,7 +507,7 @@ window.HolstAR = (function () {
       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
       if (!pose || !placed) return;
 
-      uploadTexture(opts.getSource());
+      if (texDirty) uploadTexture(opts.getSource());
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
       gl.useProgram(program);
@@ -547,7 +573,7 @@ window.HolstAR = (function () {
       stop,
       destroy() { stop(); },
       reset() { placed = null; if (opts.onChange) opts.onChange({ mode: "space", ready: false, placing: true }); },
-      refreshTexture() { uploadTexture(opts.getSource()); },
+      refreshTexture() { texDirty = true; uploadTexture(opts.getSource()); },
       get running() { return running; },
       async supported() { return xrSupported(); },
     };

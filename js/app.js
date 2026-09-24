@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VER = "16";
+  const VER = "17";
   const SIZES = [
     [20, 30], [30, 40], [40, 50], [50, 50], [50, 70], [60, 80],
   ];
@@ -71,8 +71,9 @@
   }
 
   function canvasLongPx(widthCm, heightCm) {
+    // ~100 px/cm so close-up AR / camera overlay stays sharp on phone screens
     const longCm = Math.max(widthCm || 40, heightCm || 50);
-    return Math.round(Math.min(2560, Math.max(1800, longCm * 48)));
+    return Math.round(Math.min(4096, Math.max(2400, longCm * 100)));
   }
 
   function projectZoom(p) {
@@ -1766,6 +1767,40 @@
     });
   }
 
+  async function ensureHiExport(p) {
+    const need = canvasLongPx(p.widthCm, p.heightCm);
+    if (exportShot && Math.max(exportShot.width, exportShot.height) >= need * 0.92) {
+      return exportShot;
+    }
+    if (easel && state.activeId === p.id) {
+      for (const s of p.stickers) {
+        if (easel.images[s.imageId]) continue;
+        const url = await fileUrl("cut:" + s.imageId);
+        if (url) easel.setImage(s.imageId, await loadImage(url));
+      }
+      exportShot = easel.exportCanvas(need);
+      return exportShot;
+    }
+    const wrap = document.createElement("div");
+    wrap.style.cssText = "position:fixed;left:-9999px;width:400px;height:500px";
+    const cv = document.createElement("canvas");
+    wrap.appendChild(cv);
+    document.body.appendChild(wrap);
+    const tmp = new Easel(cv, {});
+    tmp.setScene({
+      stickers: p.stickers, bg: p.bg, gridN: p.gridN,
+      widthCm: p.widthCm, heightCm: p.heightCm,
+    });
+    for (const s of p.stickers) {
+      const url = await fileUrl("cut:" + s.imageId);
+      if (url) tmp.setImage(s.imageId, await loadImage(url));
+    }
+    tmp.resize();
+    exportShot = tmp.exportCanvas(need);
+    wrap.remove();
+    return exportShot;
+  }
+
   async function renderCamera(p) {
     const mode = arModeId();
     renderTop("Проекция", mode === "space" ? "пространство · Android AR" : "углы · привязка к холсту");
@@ -1836,6 +1871,7 @@
     if (!exportShot) {
       try { p.analysis = await runAnalysis(p); } catch (e) {}
     }
+    try { await ensureHiExport(p); } catch (e) {}
     if (state.overlayOpacity == null || state.overlayOpacity === 0.42) state.overlayOpacity = 0.28;
     const aspect = p.widthCm / p.heightCm;
     const steps = p.analysis.steps || [];
