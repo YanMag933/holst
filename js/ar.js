@@ -538,24 +538,47 @@ window.HolstAR = (function () {
     async function start() {
       if (running) return;
       if (!(await xrSupported())) {
-        throw new Error("Нет комнатного AR. Нужен Chrome и «Сервисы Google Play для AR» из Play Маркета — не расширение. Или включи режим «Углы».");
+        const err = new Error("Нет комнатного AR. Нужен Chrome и «Сервисы Google Play для AR».");
+        err.name = "NotSupportedError";
+        throw err;
       }
-      try {
-        session = await navigator.xr.requestSession("immersive-ar", {
-          requiredFeatures: ["hit-test"],
-          optionalFeatures: ["local-floor"],
-        });
-      } catch (e1) {
-        // Retry without optional features — some phones reject the first request
-        session = await navigator.xr.requestSession("immersive-ar", {
-          requiredFeatures: ["hit-test"],
-        });
+      let lastErr = null;
+      const attempts = [
+        { requiredFeatures: ["hit-test"], optionalFeatures: ["local-floor"] },
+        { requiredFeatures: ["hit-test"] },
+      ];
+      for (const optsReq of attempts) {
+        try {
+          session = await navigator.xr.requestSession("immersive-ar", optsReq);
+          lastErr = null;
+          break;
+        } catch (e) {
+          lastErr = e;
+        }
       }
+      if (!session) throw lastErr || new Error("Не удалось запустить immersive-ar");
       running = true;
-      await initGl();
-      viewerSpace = await session.requestReferenceSpace("viewer");
-      refSpace = await session.requestReferenceSpace("local");
-      hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+      try {
+        await initGl();
+        viewerSpace = await session.requestReferenceSpace("viewer");
+        try {
+          refSpace = await session.requestReferenceSpace("local-floor");
+        } catch (e) {
+          refSpace = await session.requestReferenceSpace("local");
+        }
+        try {
+          hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+        } catch (e) {
+          // hit-test may need a moment after ARCore update
+          await new Promise((r) => setTimeout(r, 400));
+          hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+        }
+      } catch (e) {
+        try { await session.end(); } catch (e2) {}
+        session = null;
+        running = false;
+        throw e;
+      }
       session.addEventListener("select", onSelect);
       session.addEventListener("end", () => {
         running = false;

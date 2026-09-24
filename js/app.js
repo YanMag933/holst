@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VER = "20";
+  const VER = "21";
   const ARCORE_PLAY =
     "https://play.google.com/store/apps/details?id=com.google.ar.core";
   const ARCORE_MARKET = "market://details?id=com.google.ar.core";
@@ -68,6 +68,21 @@
       try { window.location.href = ARCORE_MARKET; }
       catch (e) { window.location.href = ARCORE_PLAY; }
     }
+  }
+
+  function xrFailHint(e) {
+    const name = (e && e.name) || "";
+    const msg = String((e && e.message) || "");
+    if (name === "AbortError" || /abort|cancel|interrupted/i.test(msg)) {
+      return "Обновление AR оборвало запуск. Дождись конца обновления пакета, полностью закрой Chrome из «Недавних», открой Холст снова и нажми «Попробовать снова».";
+    }
+    if (/not supported|unsupported|immersive/i.test(msg) || name === "NotSupportedError") {
+      return "Этот телефон/браузер не тянет комнатный AR. Поставь свежий Chrome и пакет AR, либо работай в режиме «Углы».";
+    }
+    if (/security|permission|denied/i.test(msg) || name === "SecurityError" || name === "NotAllowedError") {
+      return "Камера или AR запрещены. Разреши камеру для Chrome и попробуй снова.";
+    }
+    return msg || "Не удалось запустить комнатный AR.";
   }
 
   function esc(s) {
@@ -1861,7 +1876,7 @@
               <div class="row wrap" style="margin-top:8px">
                 <button type="button" class="btn ghost row" id="ar-rebind">${mode === "space" ? "Поставить заново" : "Перепривязать"}</button>
                 <button type="button" class="btn ghost row" id="ar-reset">Сбросить</button>
-                ${mode === "space" ? `<button type="button" class="btn gold row" id="ar-install">Установить AR</button>` : ""}
+                ${mode === "space" ? `<button type="button" class="btn gold row" id="ar-retry">Попробовать снова</button><button type="button" class="btn ghost row" id="ar-install">Пакет AR</button>` : ""}
               </div>
               <p class="tiny" id="ar-hint"></p>
               <label class="field">Прозрачность картины
@@ -1932,7 +1947,7 @@
       }
       if (hint) {
         hint.textContent = mode === "space"
-          ? "Нужен Chrome и «Сервисы Google Play для AR» из Play Маркета (не расширение). Если телефон спросит скачать сервис AR — это оно. Не вышло — переключись на «Углы»."
+          ? "Если сверху просит обновить AR — обнови и дождись конца. Потом закрой Chrome полностью и нажми «Попробовать снова». Пока обновляется — не жми ничего."
           : "Тапни по 4 углам реального холста: левый верх → правый верх → правый низ → левый низ. Потом можно подвинуть точки. Работает без установок.";
       }
       const ppm = StudioCam.pxPerMm(state.calibrate);
@@ -2055,7 +2070,12 @@
       };
     } else {
       const installBtn = document.getElementById("ar-install");
+      const retryBtn = document.getElementById("ar-retry");
       if (installBtn) installBtn.onclick = () => openArCoreInstall();
+      if (retryBtn) retryBtn.onclick = () => {
+        toast("Запускаю AR снова…");
+        render();
+      };
 
       let canXr = false;
       try {
@@ -2064,22 +2084,25 @@
         canXr = false;
       }
       if (!canXr) {
-        openArCoreInstall();
         if (err) {
-          err.textContent = "Нужен пакет «Сервисы Google Play для AR» (com.google.ar.core). Открыл страницу установки — поставь и снова выбери «Комната».";
+          err.textContent = "Комнатный AR пока не виден системе. Поставь/обнови «Сервисы Google Play для AR», закрой Chrome из «Недавних» и нажми «Попробовать снова».";
         }
         if (hint) {
-          hint.textContent = "После установки вернись в Chrome и снова включи «Комната». Пока можно работать на «Углах».";
+          hint.textContent = "Не уходи сразу на «Углы», если хочешь комнату: сначала доустанови пакет, полностью перезапусти Chrome.";
         }
-        state.arMode = "pin";
-        save();
-        toast("Открыл установку AR — потом снова «Комната»");
-        render();
+        toast("Нужен пакет AR — кнопка «Пакет AR»");
+        // Stay on space UI so user can retry; show camera underneath for orientation
+        try {
+          await StudioCam.start(video);
+          camLive = true;
+        } catch (e2) {}
+        layout();
+        updateHud();
         return;
       }
       video.style.display = "none";
       ov.classList.add("cam-xr-ov");
-      hint.textContent = "Запускаю AR…";
+      hint.textContent = "Запускаю AR… Если просит обновить пакет — обнови и дождись конца, потом «Попробовать снова».";
       arSession = HolstAR.createXrSession({
         canvas: ov,
         overlayRoot: root,
@@ -2090,19 +2113,32 @@
         onChange() { updateHud(); },
         onEnd() {
           camLive = false;
-          if (state.tab === "camera") toast("AR завершён");
+          if (state.tab === "camera") {
+            if (err) {
+              err.textContent = "AR закрылся (часто после обновления пакета). Нажми «Попробовать снова».";
+            }
+            toast("AR закрылся — нажми «Попробовать снова»");
+          }
         },
       });
       try {
         await arSession.start();
         camLive = true;
+        if (err) err.textContent = "";
         toast("Тапни по плоскости холста");
       } catch (e) {
-        openArCoreInstall();
-        state.arMode = "pin";
-        save();
-        toast("AR не запустился — открыл установку. Потом снова «Комната»");
-        render();
+        if (err) err.textContent = xrFailHint(e);
+        if (hint) {
+          hint.textContent = "1) Дождись конца обновления AR. 2) Закрой Chrome из «Недавних». 3) Открой Холст. 4) Снова «Комната» → «Попробовать снова».";
+        }
+        toast("Не удалось запустить — обнови AR до конца и попробуй снова");
+        video.style.display = "";
+        ov.classList.remove("cam-xr-ov");
+        try {
+          await StudioCam.start(video);
+          camLive = true;
+        } catch (e2) {}
+        layout();
         return;
       }
       document.getElementById("ar-rebind").onclick = () => {
