@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VER = "18";
+  const VER = "19";
   const SIZES = [
     [20, 30], [30, 40], [40, 50], [50, 50], [50, 70], [60, 80],
   ];
@@ -55,7 +55,15 @@
   }
 
   function arModeLabel(id) {
-    return id === "space" ? "Комната · нужен ARCore" : "Углы · работает везде";
+    return id === "space" ? "Комната (нужен Google)" : "Углы";
+  }
+
+  async function roomArAvailable() {
+    try {
+      return !!(window.HolstAR && (await HolstAR.xrSupported()));
+    } catch (e) {
+      return false;
+    }
   }
 
   function esc(s) {
@@ -512,13 +520,8 @@
       </div>
       <div class="card">
         <h3>Привязка к холсту</h3>
-        <p class="muted">В камере картину можно наложить на реальный холст. Основной режим — «Углы»: работает на любом телефоне без установок.</p>
-        <div class="chips" id="ar-mode-chips" style="margin-top:10px">
-          <button type="button" class="chip ${arModeId() === "pin" ? "on" : ""}" data-ar="pin">Углы · везде</button>
-          <button type="button" class="chip ${arModeId() === "space" ? "on" : ""}" data-ar="space">Комната · ARCore</button>
-        </div>
-        <p class="tiny" style="margin-top:10px"><b>Углы</b> — тапаешь 4 угла холста. Ничего скачивать не нужно. Если съехало — «Перепривязать».</p>
-        <p class="tiny"><b>Комната</b> — картинка «висит» в пространстве, можно отойти. Это не расширение браузера: нужен Chrome и пакет <b>Сервисы Google Play для AR</b> из Play Маркета. Вшить его в приложение нельзя — это системный сервис телефона. Если телефон без Google Play или AR не поддерживается — просто пользуйся «Углами».</p>
+        <p class="muted">В камере тапни 4 угла реального холста — картина ляжет поверх. Работает на любом телефоне, без магазинов и расширений.</p>
+        <p class="tiny" style="margin-top:10px">Режим «картинка висит в комнате и не съезжает, когда ходишь» на Android возможен только через сервисы Google (ARCore) и Play Маркет. Без Play Маркета этого режима нет — ни вшить, ни скачать отдельно нельзя. Пользуйся привязкой по углам.</p>
       </div>
       <div class="card">
         <h3>Другой экран</h3>
@@ -540,14 +543,6 @@
       <button type="button" class="btn ghost" id="to-home">К картинам</button>
     `;
     document.getElementById("to-home").onclick = () => { state.tab = "home"; render(); };
-    document.querySelectorAll("#ar-mode-chips [data-ar]").forEach((b) => {
-      b.onclick = () => {
-        state.arMode = b.dataset.ar;
-        save();
-        renderHowTo();
-        toast(arModeLabel(state.arMode));
-      };
-    });
     bindUpdate();
   }
 
@@ -1802,8 +1797,14 @@
   }
 
   async function renderCamera(p) {
-    const mode = arModeId();
-    renderTop("Проекция", mode === "space" ? "пространство · Android AR" : "углы · привязка к холсту");
+    let mode = arModeId();
+    const canRoom = await roomArAvailable();
+    if (mode === "space" && !canRoom) {
+      state.arMode = "pin";
+      save();
+      mode = "pin";
+    }
+    renderTop("Проекция", mode === "space" ? "комната · AR" : "углы · привязка к холсту");
     if (!p.analysis) {
       app.innerHTML = `<div class="empty">Сначала разбери картину на вкладке «Этапы».</div>`;
       return;
@@ -1838,11 +1839,13 @@
               </div>
             </div>
             <div class="cam-sheet-body">
+              ${canRoom ? `
               <div class="field">Режим привязки</div>
               <div class="chips" id="cam-ar-chips">
-                <button type="button" class="chip ${mode === "pin" ? "on" : ""}" data-ar="pin">Углы · везде</button>
-                <button type="button" class="chip ${mode === "space" ? "on" : ""}" data-ar="space">Комната · ARCore</button>
-              </div>
+                <button type="button" class="chip ${mode === "pin" ? "on" : ""}" data-ar="pin">Углы</button>
+                <button type="button" class="chip ${mode === "space" ? "on" : ""}" data-ar="space">Комната</button>
+              </div>` : `
+              <p class="tiny">Привязка по 4 углам. Комнатный AR здесь недоступен — без Google Play его не поставить.</p>`}
               <div class="row wrap" style="margin-top:8px">
                 <button type="button" class="btn ghost row" id="ar-rebind">${mode === "space" ? "Поставить заново" : "Перепривязать"}</button>
                 <button type="button" class="btn ghost row" id="ar-reset">Сбросить</button>
@@ -1916,8 +1919,8 @@
       }
       if (hint) {
         hint.textContent = mode === "space"
-          ? "Нужен Chrome и «Сервисы Google Play для AR» из Play Маркета (не расширение). Если телефон спросит скачать сервис AR — это оно. Не вышло — переключись на «Углы»."
-          : "Тапни по 4 углам реального холста: левый верх → правый верх → правый низ → левый низ. Потом можно подвинуть точки. Работает без установок.";
+          ? "Наведи на холст и тапни — картинка встанет в пространстве."
+          : "Тапни 4 угла холста: левый верх → правый верх → правый низ → левый низ. Потом можно подвинуть точки. Если съехало — «Перепривязать».";
       }
       const ppm = StudioCam.pxPerMm(state.calibrate);
       const mix = document.getElementById("cam-mix");
@@ -1981,6 +1984,10 @@
     document.querySelectorAll("#cam-ar-chips [data-ar]").forEach((b) => {
       b.onclick = () => {
         if (b.dataset.ar === mode) return;
+        if (b.dataset.ar === "space" && !canRoom) {
+          toast("Комнатный AR недоступен без Google Play");
+          return;
+        }
         state.arMode = b.dataset.ar;
         save();
         render();
@@ -2038,23 +2045,9 @@
         save();
       };
     } else {
-      // Space AR needs OS ARCore — not embedable. Probe first; fall back to pin silently.
-      let canXr = false;
-      try {
-        canXr = !!(window.HolstAR && (await HolstAR.xrSupported()));
-      } catch (e) {
-        canXr = false;
-      }
-      if (!canXr) {
-        state.arMode = "pin";
-        save();
-        toast("Комнатный AR недоступен — включаю «Углы»");
-        render();
-        return;
-      }
       video.style.display = "none";
       ov.classList.add("cam-xr-ov");
-      hint.textContent = "Запускаю AR… Нужен пакет «Сервисы Google Play для AR», не расширение браузера.";
+      hint.textContent = "Запускаю AR…";
       arSession = HolstAR.createXrSession({
         canvas: ov,
         overlayRoot: root,
@@ -2065,9 +2058,7 @@
         onChange() { updateHud(); },
         onEnd() {
           camLive = false;
-          if (state.tab === "camera") {
-            toast("AR завершён");
-          }
+          if (state.tab === "camera") toast("AR завершён");
         },
       });
       try {
@@ -2075,12 +2066,9 @@
         camLive = true;
         toast("Тапни по плоскости холста");
       } catch (e) {
-        const msg = (e && e.message) || "";
         state.arMode = "pin";
         save();
-        toast(msg.includes("AR") || msg.includes("XR")
-          ? "Комнатный AR не запустился — включаю «Углы»"
-          : "AR не запустился — включаю «Углы»");
+        toast("Комнатный AR не запустился — включаю углы");
         render();
         return;
       }
