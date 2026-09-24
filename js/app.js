@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VER = "15";
+  const VER = "16";
   const SIZES = [
     [20, 30], [30, 40], [40, 50], [50, 50], [50, 70], [60, 80],
   ];
@@ -23,6 +23,8 @@
   let easel = null;
   let camLive = false;
   let exportShot = null;
+  let arSession = null;
+  let camOnResize = null;
   let deferredPrompt = null;
   let cutImg = null;
   let photoImg = null;
@@ -41,9 +43,19 @@
       activeId: null,
       calibrate: null,
       overlayOpacity: 0.28,
+      arMode: "pin",
+      arPinCorners: null,
       projects: [],
       ui: {},
     };
+  }
+
+  function arModeId() {
+    return state.arMode === "space" ? "space" : "pin";
+  }
+
+  function arModeLabel(id) {
+    return id === "space" ? "Пространство · Android" : "Углы · iPhone";
   }
 
   function esc(s) {
@@ -498,6 +510,16 @@
         4. Дальше запускай иконку «Холст» — без компьютера и можно без интернета.</p>
       </div>
       <div class="card">
+        <h3>Привязка к холсту</h3>
+        <p class="muted">В камере картину можно «приклеить» к реальному холсту. Два режима — попробуй оба на разных телефонах.</p>
+        <div class="chips" id="ar-mode-chips" style="margin-top:10px">
+          <button type="button" class="chip ${arModeId() === "pin" ? "on" : ""}" data-ar="pin">Углы · iPhone</button>
+          <button type="button" class="chip ${arModeId() === "space" ? "on" : ""}" data-ar="space">Пространство · Android</button>
+        </div>
+        <p class="tiny" style="margin-top:10px"><b>Углы</b> — тапаешь 4 угла реального холста. Работает на iPhone и Android. Если съехало — «Перепривязать».</p>
+        <p class="tiny"><b>Пространство</b> — WebXR AR: картинка висит в комнате, можно отойти. Лучше всего в Chrome на Android. На iPhone обычно недоступно.</p>
+      </div>
+      <div class="card">
         <h3>Другой экран</h3>
         <p class="muted">На холсте или в камере нажми «Показать на телевизоре». Открой код на компьютере или Smart TV в браузере — оба в одном Wi‑Fi. Интернет нужен на пару секунд, дальше картина идёт с телефона. Если не находится: транслируй экран телефона как обычно (AirPlay, Google Cast, Smart View) или HDMI.</p>
       </div>
@@ -517,6 +539,14 @@
       <button type="button" class="btn ghost" id="to-home">К картинам</button>
     `;
     document.getElementById("to-home").onclick = () => { state.tab = "home"; render(); };
+    document.querySelectorAll("#ar-mode-chips [data-ar]").forEach((b) => {
+      b.onclick = () => {
+        state.arMode = b.dataset.ar;
+        save();
+        renderHowTo();
+        toast(arModeLabel(state.arMode));
+      };
+    });
     bindUpdate();
   }
 
@@ -1737,15 +1767,20 @@
   }
 
   async function renderCamera(p) {
-    renderTop("Проекция", "совмести рамку с реальным холстом");
+    const mode = arModeId();
+    renderTop("Проекция", mode === "space" ? "пространство · Android AR" : "углы · привязка к холсту");
     if (!p.analysis) {
       app.innerHTML = `<div class="empty">Сначала разбери картину на вкладке «Этапы».</div>`;
       return;
     }
+    if (arSession && arSession.destroy) {
+      try { arSession.destroy(); } catch (e) {}
+      arSession = null;
+    }
     app.innerHTML = `
       <div class="cam-root" id="cam-root">
         <video id="cam-video" playsinline muted autoplay></video>
-        <div class="cam-frame" id="cam-frame"><canvas id="cam-ov"></canvas></div>
+        <canvas id="cam-ov" class="cam-full-ov"></canvas>
         <div class="cam-top">
           <span class="tiny cam-chip" id="cam-label"></span>
         </div>
@@ -1768,14 +1803,22 @@
               </div>
             </div>
             <div class="cam-sheet-body">
+              <div class="field">Режим привязки</div>
+              <div class="chips" id="cam-ar-chips">
+                <button type="button" class="chip ${mode === "pin" ? "on" : ""}" data-ar="pin">Углы · iPhone</button>
+                <button type="button" class="chip ${mode === "space" ? "on" : ""}" data-ar="space">Пространство · Android</button>
+              </div>
+              <div class="row wrap" style="margin-top:8px">
+                <button type="button" class="btn ghost row" id="ar-rebind">${mode === "space" ? "Поставить заново" : "Перепривязать"}</button>
+                <button type="button" class="btn ghost row" id="ar-reset">Сбросить</button>
+              </div>
+              <p class="tiny" id="ar-hint"></p>
               <label class="field">Прозрачность картины
                 <input id="op" type="range" min="8" max="70" value="${Math.round((state.overlayOpacity || 0.28) * 100)}" />
               </label>
               <label class="field">Этап
                 <select id="cam-step"></select>
               </label>
-              ${zoomBarHtml(p)}
-              <p class="tiny" id="zoom-hint"></p>
               <button type="button" class="btn ghost" id="cast-screen">Другой экран</button>
               <div id="cam-mix"></div>
               <p class="tiny" id="cam-err" style="color:var(--bad)"></p>
@@ -1785,17 +1828,11 @@
       </div>
     `;
     const video = document.getElementById("cam-video");
-    const frame = document.getElementById("cam-frame");
     const ov = document.getElementById("cam-ov");
     const err = document.getElementById("cam-err");
-    try {
-      await StudioCam.start(video);
-      camLive = true;
-    } catch (e) {
-      err.textContent = insecureCam()
-        ? "Камера на телефоне нужна по https. Открой приложение с иконки на экране «Домой» или с GitHub Pages."
-        : "Нет доступа к камере. Разреши её в настройках браузера для этого сайта.";
-    }
+    const hint = document.getElementById("ar-hint");
+    const root = document.getElementById("cam-root");
+
     if (!exportShot) {
       try { p.analysis = await runAnalysis(p); } catch (e) {}
     }
@@ -1824,49 +1861,28 @@
       if (next === cur) return;
       p.stepIndex = next;
       if (sel) sel.value = String(next);
-      setProjectZoom(p, { kind: "full", col: 0, row: 0 });
       save();
-      paintCam();
+      updateHud();
+      if (arSession && arSession.paint) arSession.paint();
     }
     if (toggle) toggle.onclick = () => setSheet(!sheet.classList.contains("open"));
     if (scrim) scrim.onclick = () => setSheet(false);
     if (prevBtn) prevBtn.onclick = () => goStep(-1);
     if (nextBtn) nextBtn.onclick = () => goStep(1);
-    function layout() {
-      const root = document.getElementById("cam-root");
-      const nav = document.getElementById("nav");
-      const handle = document.querySelector(".cam-sheet-handle");
-      const extra = (nav ? nav.getBoundingClientRect().height : 68) + (handle ? handle.getBoundingClientRect().height : 56) + 6;
-      const fit = StudioCam.fitFrame(root, aspect, { bottom: extra });
-      frame.style.left = fit.left + "px";
-      frame.style.top = fit.top + "px";
-      frame.style.width = fit.fw + "px";
-      frame.style.height = fit.fh + "px";
-      const dpr = Math.min(2, window.devicePixelRatio || 1);
-      ov.width = Math.round(fit.fw * dpr);
-      ov.height = Math.round(fit.fh * dpr);
-      paintCam();
-    }
-    function zoomLabel() {
-      const z = projectZoom(p);
-      if (z.kind === "cell") {
-        return `Клетка ${StudioAnalyze.cellLabel(z.col, z.row, p.gridN)} · один квадрат`;
-      }
-      if (z.kind === "quad") {
-        return `4 клетки · ${StudioAnalyze.cellLabel(z.col, z.row, p.gridN)} и рядом`;
-      }
-      return `${p.widthCm}×${p.heightCm} см · совмести рамку с холстом`;
-    }
-    function paintCam() {
+
+    function updateHud() {
       const step = steps[p.stepIndex || 0];
-      const z = projectZoom(p);
-      document.getElementById("cam-label").textContent = zoomLabel();
-      document.getElementById("zoom-hint").textContent = z.kind === "full"
-        ? "Коснись клетки: сначала 4 квадрата, потом один. Ещё раз — весь холст."
-        : z.kind === "quad"
-          ? "Четыре клетки на весь кадр. Коснись одной — ещё ближе, или кнопку «весь холст»."
-          : "Один квадрат. Коснись ещё раз, чтобы вернуть весь холст.";
-      const hi = (step && step.cells) || [];
+      const label = document.getElementById("cam-label");
+      if (label) {
+        label.textContent = mode === "space"
+          ? (arSession && arSession.running ? "AR · тапни по плоскости холста" : "AR · запуск…")
+          : `${p.widthCm}×${p.heightCm} см · ${arModeLabel("pin")}`;
+      }
+      if (hint) {
+        hint.textContent = mode === "space"
+          ? "Наведи на реальный холст и тапни — картинка встанет в пространстве. Отойди: она останется. Работает в Chrome на Android."
+          : "Тапни по 4 углам реального холста по порядку: левый верх → правый верх → правый низ → левый низ. Потом можно подвинуть точки. Подойди ближе камерой — перепривяжи углы, и картинка станет крупнее.";
+      }
       const ppm = StudioCam.pxPerMm(state.calibrate);
       const mix = document.getElementById("cam-mix");
       const sh = (step && step.shades && step.shades[0]) || null;
@@ -1877,9 +1893,7 @@
         if (sh && sh.mix) {
           handleSw.hidden = false;
           handleSw.style.background = sh.mix.hex;
-        } else {
-          handleSw.hidden = true;
-        }
+        } else handleSw.hidden = true;
       }
       const idx = Math.max(0, Math.min(Math.max(0, steps.length - 1), p.stepIndex || 0));
       if (stepCount) stepCount.textContent = steps.length ? (idx + 1) + " / " + steps.length : "";
@@ -1899,64 +1913,173 @@
           <span class="stroke-preview" style="--stroke:${Math.min(48, (sh.strokeMm || 10) * ppm)}px;background:${esc(sh.mix.hex)};margin:0 0 0 auto"></span>
         </div>` : ""}
       ` : "";
-      StudioCam.drawOverlay({
-        canvas: ov,
-        exportCanvas: exportShot,
-        opacity: state.overlayOpacity || 0.28,
-        gridN: p.gridN,
-        zoom: z,
-        highlightCells: hi,
-      });
-      const bar = document.getElementById("zoom-bar");
-      if (bar) {
-        bar.querySelectorAll("[data-zoom]").forEach((x) => {
-          x.classList.toggle("on", x.dataset.zoom === z.kind);
-        });
+    }
+
+    function layout() {
+      const nav = document.getElementById("nav");
+      const handle = document.querySelector(".cam-sheet-handle");
+      const extra = (nav ? nav.getBoundingClientRect().height : 68) + (handle ? handle.getBoundingClientRect().height : 56) + 6;
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const rw = root.clientWidth;
+      const rh = Math.max(120, root.clientHeight - extra);
+      ov.style.left = "0";
+      ov.style.top = "0";
+      ov.style.width = rw + "px";
+      ov.style.height = rh + "px";
+      const nw = Math.round(rw * dpr);
+      const nh = Math.round(rh * dpr);
+      if (ov.width !== nw || ov.height !== nh) {
+        ov.width = nw;
+        ov.height = nh;
+        if (arSession && arSession.setCorners && Array.isArray(state.arPinCorners) && state.arPinCorners.length === 4) {
+          arSession.setCorners(state.arPinCorners.map((c) => ({
+            x: c.x * ov.width,
+            y: c.y * ov.height,
+          })));
+        }
       }
+      if (arSession && arSession.setAspect) arSession.setAspect(aspect);
+      if (arSession && arSession.paint) arSession.paint();
     }
-    ov.onclick = (e) => {
-      const r = ov.getBoundingClientRect();
-      const n = p.gridN || 4;
-      const z = projectZoom(p);
-      const rect = Easel.viewRect(z, n);
-      const u = (e.clientX - r.left) / Math.max(1, r.width);
-      const v = (e.clientY - r.top) / Math.max(1, r.height);
-      const col = Math.min(n - 1, Math.max(0, Math.floor((rect.x + u * rect.w) * n)));
-      const row = Math.min(n - 1, Math.max(0, Math.floor((rect.y + v * rect.h) * n)));
-      setProjectZoom(p, zoomFromTap(p, col, row));
-      save();
-      paintCam();
-    };
-    const zoomBar = document.getElementById("zoom-bar");
-    if (zoomBar) {
-      zoomBar.querySelectorAll("[data-zoom]").forEach((b) => {
-        b.onclick = () => {
-          setProjectZoom(p, zoomKindTarget(p, b.dataset.zoom));
-          save();
-          paintCam();
-        };
+
+    document.querySelectorAll("#cam-ar-chips [data-ar]").forEach((b) => {
+      b.onclick = () => {
+        if (b.dataset.ar === mode) return;
+        state.arMode = b.dataset.ar;
+        save();
+        render();
+      };
+    });
+
+    if (mode === "pin") {
+      try {
+        await StudioCam.start(video);
+        camLive = true;
+      } catch (e) {
+        err.textContent = insecureCam()
+          ? "Камера на телефоне нужна по https. Открой приложение с иконки на экране «Домой» или с GitHub Pages."
+          : "Нет доступа к камере. Разреши её в настройках браузера для этого сайта.";
+      }
+      layout();
+      const saved = Array.isArray(state.arPinCorners) && state.arPinCorners.length === 4
+        ? state.arPinCorners.map((c) => ({
+          x: c.x * ov.width,
+          y: c.y * ov.height,
+        }))
+        : [];
+      arSession = HolstAR.createPinSession({
+        canvas: ov,
+        aspect,
+        corners: saved,
+        getSource: () => exportShot,
+        getOpacity: () => state.overlayOpacity || 0.28,
+        getHighlight: () => {
+          const step = steps[p.stepIndex || 0];
+          return { cells: (step && step.cells) || [], gridN: p.gridN || 4 };
+        },
+        onChange(snap) {
+          if (snap.ready && snap.corners) {
+            state.arPinCorners = snap.corners.map((c) => ({
+              x: c.x / Math.max(1, ov.width),
+              y: c.y / Math.max(1, ov.height),
+            }));
+            save();
+          }
+          if (!snap.ready) {
+            state.arPinCorners = null;
+            save();
+          }
+        },
       });
+      arSession.paint();
+      document.getElementById("ar-rebind").onclick = () => {
+        arSession.reset();
+        toast("Тапни 4 угла заново");
+      };
+      document.getElementById("ar-reset").onclick = () => {
+        arSession.reset();
+        state.arPinCorners = null;
+        save();
+      };
+    } else {
+      video.style.display = "none";
+      ov.classList.add("cam-xr-ov");
+      hint.textContent = "Запускаю AR… Если iPhone — переключись на «Углы».";
+      arSession = HolstAR.createXrSession({
+        canvas: ov,
+        overlayRoot: root,
+        widthCm: p.widthCm,
+        heightCm: p.heightCm,
+        getSource: () => exportShot,
+        getOpacity: () => Math.max(0.2, state.overlayOpacity || 0.35),
+        onChange() { updateHud(); },
+        onEnd() {
+          camLive = false;
+          if (state.tab === "camera") {
+            toast("AR завершён");
+          }
+        },
+      });
+      try {
+        await arSession.start();
+        camLive = true;
+        toast("Тапни по плоскости холста");
+      } catch (e) {
+        err.textContent = (e && e.message) || "AR недоступен на этом устройстве.";
+        hint.textContent = "На этом телефоне нет WebXR. Включи режим «Углы · iPhone».";
+        // auto-suggest pin
+        const chips = document.getElementById("cam-ar-chips");
+        if (chips) {
+          const pinBtn = chips.querySelector('[data-ar="pin"]');
+          if (pinBtn) pinBtn.classList.add("on");
+          const spBtn = chips.querySelector('[data-ar="space"]');
+          if (spBtn) spBtn.classList.remove("on");
+        }
+      }
+      document.getElementById("ar-rebind").onclick = () => {
+        if (arSession) arSession.reset();
+        toast("Тапни новую плоскость");
+      };
+      document.getElementById("ar-reset").onclick = () => {
+        if (arSession) arSession.reset();
+      };
+      layout();
     }
+
     const castBtn = document.getElementById("cast-screen");
     if (castBtn) castBtn.onclick = () => openCastSheet(p);
     if (sel) {
       sel.onchange = () => {
         p.stepIndex = Number(sel.value);
-        setProjectZoom(p, { kind: "full", col: 0, row: 0 });
         save();
-        paintCam();
+        updateHud();
+        if (arSession && arSession.paint) arSession.paint();
       };
     }
     document.getElementById("op").oninput = (e) => {
       state.overlayOpacity = Number(e.target.value) / 100;
       save();
-      paintCam();
+      if (arSession && arSession.paint) arSession.paint();
+      if (arSession && arSession.refreshTexture) arSession.refreshTexture();
     };
-    layout();
-    window.addEventListener("resize", layout, { passive: true });
+    updateHud();
+    if (camOnResize) window.removeEventListener("resize", camOnResize);
+    camOnResize = layout;
+    window.addEventListener("resize", camOnResize, { passive: true });
   }
 
   function stopCam() {
+    if (camOnResize) {
+      window.removeEventListener("resize", camOnResize);
+      camOnResize = null;
+    }
+    if (arSession) {
+      try {
+        if (arSession.destroy) arSession.destroy();
+        if (arSession.stop) arSession.stop();
+      } catch (e) {}
+      arSession = null;
+    }
     if (camLive) StudioCam.stop();
     camLive = false;
   }

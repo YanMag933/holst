@@ -1,4 +1,4 @@
-const VER = "15";
+const VER = "16";
 
 self.addEventListener("install", (e) => {
   const urls = [
@@ -17,6 +17,7 @@ self.addEventListener("install", (e) => {
     "./js/compose.js?v=" + VER,
     "./js/analyze.js?v=" + VER,
     "./js/camera.js?v=" + VER,
+    "./js/ar.js?v=" + VER,
     "./js/cast.js?v=" + VER,
     "./js/app.js?v=" + VER,
     "./models/magic_touch.tflite",
