@@ -538,13 +538,19 @@ window.HolstAR = (function () {
     async function start() {
       if (running) return;
       if (!(await xrSupported())) {
-        throw new Error("На этом телефоне нет WebXR AR. Включи режим «Углы» — он работает на iPhone.");
+        throw new Error("Нет комнатного AR. Нужен Chrome и «Сервисы Google Play для AR» из Play Маркета — не расширение. Или включи режим «Углы».");
       }
-      session = await navigator.xr.requestSession("immersive-ar", {
-        requiredFeatures: ["hit-test"],
-        optionalFeatures: ["dom-overlay", "local-floor"],
-        domOverlay: opts.overlayRoot ? { root: opts.overlayRoot } : undefined,
-      });
+      try {
+        session = await navigator.xr.requestSession("immersive-ar", {
+          requiredFeatures: ["hit-test"],
+          optionalFeatures: ["local-floor"],
+        });
+      } catch (e1) {
+        // Retry without optional features — some phones reject the first request
+        session = await navigator.xr.requestSession("immersive-ar", {
+          requiredFeatures: ["hit-test"],
+        });
+      }
       running = true;
       await initGl();
       viewerSpace = await session.requestReferenceSpace("viewer");

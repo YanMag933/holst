@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const VER = "17";
+  const VER = "18";
   const SIZES = [
     [20, 30], [30, 40], [40, 50], [50, 50], [50, 70], [60, 80],
   ];
@@ -55,7 +55,7 @@
   }
 
   function arModeLabel(id) {
-    return id === "space" ? "Пространство · Android" : "Углы · iPhone";
+    return id === "space" ? "Комната · нужен ARCore" : "Углы · работает везде";
   }
 
   function esc(s) {
@@ -512,13 +512,13 @@
       </div>
       <div class="card">
         <h3>Привязка к холсту</h3>
-        <p class="muted">В камере картину можно «приклеить» к реальному холсту. Два режима — попробуй оба на разных телефонах.</p>
+        <p class="muted">В камере картину можно наложить на реальный холст. Основной режим — «Углы»: работает на любом телефоне без установок.</p>
         <div class="chips" id="ar-mode-chips" style="margin-top:10px">
-          <button type="button" class="chip ${arModeId() === "pin" ? "on" : ""}" data-ar="pin">Углы · iPhone</button>
-          <button type="button" class="chip ${arModeId() === "space" ? "on" : ""}" data-ar="space">Пространство · Android</button>
+          <button type="button" class="chip ${arModeId() === "pin" ? "on" : ""}" data-ar="pin">Углы · везде</button>
+          <button type="button" class="chip ${arModeId() === "space" ? "on" : ""}" data-ar="space">Комната · ARCore</button>
         </div>
-        <p class="tiny" style="margin-top:10px"><b>Углы</b> — тапаешь 4 угла реального холста. Работает на iPhone и Android. Если съехало — «Перепривязать».</p>
-        <p class="tiny"><b>Пространство</b> — WebXR AR: картинка висит в комнате, можно отойти. Лучше всего в Chrome на Android. На iPhone обычно недоступно.</p>
+        <p class="tiny" style="margin-top:10px"><b>Углы</b> — тапаешь 4 угла холста. Ничего скачивать не нужно. Если съехало — «Перепривязать».</p>
+        <p class="tiny"><b>Комната</b> — картинка «висит» в пространстве, можно отойти. Это не расширение браузера: нужен Chrome и пакет <b>Сервисы Google Play для AR</b> из Play Маркета. Вшить его в приложение нельзя — это системный сервис телефона. Если телефон без Google Play или AR не поддерживается — просто пользуйся «Углами».</p>
       </div>
       <div class="card">
         <h3>Другой экран</h3>
@@ -1840,8 +1840,8 @@
             <div class="cam-sheet-body">
               <div class="field">Режим привязки</div>
               <div class="chips" id="cam-ar-chips">
-                <button type="button" class="chip ${mode === "pin" ? "on" : ""}" data-ar="pin">Углы · iPhone</button>
-                <button type="button" class="chip ${mode === "space" ? "on" : ""}" data-ar="space">Пространство · Android</button>
+                <button type="button" class="chip ${mode === "pin" ? "on" : ""}" data-ar="pin">Углы · везде</button>
+                <button type="button" class="chip ${mode === "space" ? "on" : ""}" data-ar="space">Комната · ARCore</button>
               </div>
               <div class="row wrap" style="margin-top:8px">
                 <button type="button" class="btn ghost row" id="ar-rebind">${mode === "space" ? "Поставить заново" : "Перепривязать"}</button>
@@ -1916,8 +1916,8 @@
       }
       if (hint) {
         hint.textContent = mode === "space"
-          ? "Наведи на реальный холст и тапни — картинка встанет в пространстве. Отойди: она останется. Работает в Chrome на Android."
-          : "Тапни по 4 углам реального холста по порядку: левый верх → правый верх → правый низ → левый низ. Потом можно подвинуть точки. Подойди ближе камерой — перепривяжи углы, и картинка станет крупнее.";
+          ? "Нужен Chrome и «Сервисы Google Play для AR» из Play Маркета (не расширение). Если телефон спросит скачать сервис AR — это оно. Не вышло — переключись на «Углы»."
+          : "Тапни по 4 углам реального холста: левый верх → правый верх → правый низ → левый низ. Потом можно подвинуть точки. Работает без установок.";
       }
       const ppm = StudioCam.pxPerMm(state.calibrate);
       const mix = document.getElementById("cam-mix");
@@ -2038,9 +2038,23 @@
         save();
       };
     } else {
+      // Space AR needs OS ARCore — not embedable. Probe first; fall back to pin silently.
+      let canXr = false;
+      try {
+        canXr = !!(window.HolstAR && (await HolstAR.xrSupported()));
+      } catch (e) {
+        canXr = false;
+      }
+      if (!canXr) {
+        state.arMode = "pin";
+        save();
+        toast("Комнатный AR недоступен — включаю «Углы»");
+        render();
+        return;
+      }
       video.style.display = "none";
       ov.classList.add("cam-xr-ov");
-      hint.textContent = "Запускаю AR… Если iPhone — переключись на «Углы».";
+      hint.textContent = "Запускаю AR… Нужен пакет «Сервисы Google Play для AR», не расширение браузера.";
       arSession = HolstAR.createXrSession({
         canvas: ov,
         overlayRoot: root,
@@ -2061,16 +2075,14 @@
         camLive = true;
         toast("Тапни по плоскости холста");
       } catch (e) {
-        err.textContent = (e && e.message) || "AR недоступен на этом устройстве.";
-        hint.textContent = "На этом телефоне нет WebXR. Включи режим «Углы · iPhone».";
-        // auto-suggest pin
-        const chips = document.getElementById("cam-ar-chips");
-        if (chips) {
-          const pinBtn = chips.querySelector('[data-ar="pin"]');
-          if (pinBtn) pinBtn.classList.add("on");
-          const spBtn = chips.querySelector('[data-ar="space"]');
-          if (spBtn) spBtn.classList.remove("on");
-        }
+        const msg = (e && e.message) || "";
+        state.arMode = "pin";
+        save();
+        toast(msg.includes("AR") || msg.includes("XR")
+          ? "Комнатный AR не запустился — включаю «Углы»"
+          : "AR не запустился — включаю «Углы»");
+        render();
+        return;
       }
       document.getElementById("ar-rebind").onclick = () => {
         if (arSession) arSession.reset();
